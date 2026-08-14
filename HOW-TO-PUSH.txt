@@ -1,0 +1,16 @@
+Rideshare Retroflex — source zip
+
+1. Unzip this folder.
+2. Laptop:
+     cd Rideshare-Retroflectivapp
+     git init
+     git add .
+     git commit -m "Retroflex rear window beacon"
+     git branch -M main
+     git remote add origin https://github.com/Raheelatta1984/Rideshare-Retroflectivapp.git
+     git push -u origin main --force
+
+3. Termux: read TERMUX.md or run  bash termux-push.sh
+4. Codespaces: https://codespaces.new/Raheelatta1984/Rideshare-Retroflectivapp
+
+Never put a GitHub token inside this project.
