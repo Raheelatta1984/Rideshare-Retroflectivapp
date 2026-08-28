@@ -56,7 +56,7 @@
   <body>
     <main>
       <div class="mark">△</div>
-      <p class="small">Retroflex · Rear Tablet</p>
+      <p class="small" id="position-label">Retroflex · Rear Tablet</p>
       <h1>Connect this display</h1>
       <p>Scan the driver QR code to connect automatically. Or enter the six-character pairing code below.</p>
       <form id="pair-form">
@@ -66,13 +66,16 @@
     </main>
     <script>
       (function () {
-        var code = new URLSearchParams(window.location.search).get("display");
+        var params = new URLSearchParams(window.location.search);
+        var code = params.get("display");
+        var position = params.get("position") === "front" ? "front" : "rear";
+        document.getElementById("position-label").textContent = "Retroflex · " + (position === "front" ? "Front" : "Rear") + " Tablet";
         var root = window.location.pathname.replace(/tablet\.html$/, "");
         if (!root.endsWith("/")) root += "/";
         function openDisplay(value) {
           var clean = String(value || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
           if (clean.length !== 6) return;
-          window.location.replace(root + "?display=" + encodeURIComponent(clean));
+          window.location.replace(root + "?mode=tablet&position=" + position + "&display=" + encodeURIComponent(clean));
         }
         if (code) openDisplay(code);
         document.getElementById("pair-form").addEventListener("submit", function (event) {
