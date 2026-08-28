@@ -19,15 +19,14 @@ export function ReviewGuide({ go }: { go: (p: string) => void }) {
 
         <ol className="mt-10 space-y-4">
           <Item n="01" icon={MonitorPlay} title="Open the pair lab" body="Phone and rear tablet on one screen. Flip the ON/OFF switch and the glass follows instantly." action="Open lab" onClick={() => go("/lab")} />
-          <Item n="02" icon={Smartphone} title="Sign into the driver booth" body="Demo booth: driver@retroflex.app / demo1234. To live a big ON/OFF switch and pick which apps show on the rear glass." action="Driver login" onClick={() => go("/login")} />
+          <Item n="02" icon={Smartphone} title="Sign into the driver booth" body="Use an authorized driver, supervisor or administrator account to control the rear glass, device profiles and operational settings." action="Driver login" onClick={() => go("/login")} />
           <Item n="03" icon={Tablet} title="Arm a second window as the tablet" body="Open #/display and type 7K2M9Q, or jump straight to the paired display. Keep that window landscape." action="Arm display" onClick={() => go("/display/7K2M9Q")} />
           <Item n="04" icon={FolderGit2} title="Private source handling" body="Public users cannot download project source from this app. Keep repository access and source exports in a private GitHub or Codespaces workspace owned by the technical account." />
         </ol>
 
         <div className="mt-10 rounded-3xl border border-amber/30 bg-panel p-6">
-          <p className="text-[11px] tracking-[0.3em] text-amber">DEMO BOOTH</p>
-          <p className="mt-2 font-cond text-3xl tracking-[0.14em]">driver@retroflex.app</p>
-          <p className="text-mist">password demo1234 · pair code 7K2M9Q · Toyota Prius V · CIW37G</p>
+          <p className="text-[11px] tracking-[0.3em] text-amber">PRIVATE BOOTH ACCESS</p>
+          <p className="mt-2 text-mist">Account credentials, technical guidance and source controls are shown only inside the authorized Booth.</p>
         </div>
       </div>
     </div>

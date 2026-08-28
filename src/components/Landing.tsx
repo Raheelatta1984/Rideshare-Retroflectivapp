@@ -62,10 +62,8 @@ export function Landing({ go }: { go: (path: string) => void }) {
 
       <section className="border-y border-amber/20 bg-amber text-ink">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-3 text-sm md:px-10">
-          <p className="font-medium">Review this build first — no GitHub, no Neon, no signup required.</p>
-          <p className="text-xs tracking-wide">
-            Demo booth <span className="font-semibold">driver@retroflex.app</span> · password <span className="font-semibold">demo1234</span> · pair <span className="font-semibold">7K2M9Q</span>
-          </p>
+          <p className="font-medium">Pair the rear display with a driver-approved six-character code.</p>
+          <button onClick={() => go("/login")} className="rounded-full bg-ink px-4 py-1.5 text-xs font-semibold text-amber">Driver login</button>
         </div>
       </section>
 

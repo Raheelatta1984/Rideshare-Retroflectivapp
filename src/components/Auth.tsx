@@ -7,8 +7,8 @@ export function Auth({ mode, go }: { mode: "login" | "signup"; go: (p: string) =
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
-    email: mode === "login" ? "driver@retroflex.app" : "",
-    password: mode === "login" ? "demo1234" : "",
+    email: "",
+    password: "",
     phone: "",
     city: "",
   });
@@ -41,14 +41,17 @@ export function Auth({ mode, go }: { mode: "login" | "signup"; go: (p: string) =
         </button>
         <h1 className="font-display text-4xl">{mode === "login" ? "Back in the booth." : "Open a booth."}</h1>
         <p className="mt-2 text-sm text-mist">
-          {mode === "login" ? "Admin demo is prefilled — Raheel Atta, Toyota Prius V. New accounts are driver accounts." : "Takes a minute. Pair the tablet after."}
+          {mode === "login" ? "Use your driver, supervisor, or administrator account to enter the booth." : "Takes a minute. Pair the tablet after."}
         </p>
         <form onSubmit={submit} className="mt-8 space-y-4">
           {mode === "signup" && (
             <Field label="Full name" value={form.name} onChange={(v) => set("name", v)} />
           )}
           <Field label="Email" type="email" value={form.email} onChange={(v) => set("email", v)} />
-          <Field label="Password" type="password" value={form.password} onChange={(v) => set("password", v)} />
+          <div>
+            <Field label="Password" type="password" value={form.password} onChange={(v) => set("password", v)} />
+            {mode === "login" && <button type="button" onClick={() => go("/forgot-password")} className="mt-2 text-xs text-amber hover:text-cream">Forgot password?</button>}
+          </div>
           {mode === "signup" && (
             <>
               <Field label="Phone" value={form.phone} onChange={(v) => set("phone", v)} />
@@ -77,9 +80,6 @@ export function Auth({ mode, go }: { mode: "login" | "signup"; go: (p: string) =
             </>
           )}
         </p>
-        {mode === "login" && (
-          <p className="mt-3 text-xs leading-relaxed text-mist">Supervisor demo: <span className="text-cream">supervisor@retroflex.app</span> / <span className="text-cream">supervisor123</span></p>
-        )}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Battery, BatteryCharging, Maximize, RotateCcw } from "lucide-react";
-import type { DisplaySettings, MotionState, Platform, Ride, TabletBattery } from "../types";
-import { defaultSettings } from "../lib/storage";
+import type { CommercialCampaign, DeviceTelemetry, DisplaySettings, MotionState, Platform, Ride, TabletBattery } from "../types";
+import { db, defaultSettings } from "../lib/storage";
 import { PLATFORMS, getPlatform } from "../lib/platforms";
 import { profileForDevice } from "../lib/devices";
 import { t } from "../lib/i18n";
@@ -9,9 +9,11 @@ import { usePairChannel } from "../lib/sync";
 import { useMotion } from "../lib/motion";
 import { requestWakeLock, useNow } from "../hooks";
 import { ChevronMark } from "./Logo";
+import { uid } from "../lib/id";
 
 interface Props {
   pairCode?: string;
+  position?: "rear" | "front";
   ride?: Ride | null;
   settings?: DisplaySettings;
   powered?: boolean;
@@ -27,24 +29,56 @@ interface BrowserBatteryManager {
   removeEventListener: (event: "levelchange" | "chargingchange", handler: () => void) => void;
 }
 
-export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp, powered: poweredProp, preview, demoStopped, onExit }: Props) {
+export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, settings: settingsProp, powered: poweredProp, preview, demoStopped, onExit }: Props) {
   const [remoteRide, setRemoteRide] = useState<Ride | null>(null);
   const [remoteSettings, setRemoteSettings] = useState<DisplaySettings>(defaultSettings());
+  const [remoteMotion, setRemoteMotion] = useState<MotionState | null>(null);
   const [taps, setTaps] = useState(0);
   const [tabletBattery, setTabletBattery] = useState<TabletBattery | null>(null);
+  const [localTelemetry, setLocalTelemetry] = useState<DeviceTelemetry | null>(null);
   const [flash, setFlash] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hasRemoteSync, setHasRemoteSync] = useState(false);
+  const [activeContent, setActiveContent] = useState("blank");
   const rootRef = useRef<HTMLDivElement>(null);
   const lastStatus = useRef<string>("idle");
+  const lastSafetyStateRef = useRef<"live" | "blank" | null>(null);
   const deviceIdRef = useRef(getTabletDeviceId());
+  const mountedAtRef = useRef(Date.now());
+  const lastCommandRef = useRef("");
+  const lastBatteryLogRef = useRef<number | null>(null);
+  const lastTelemetryLogRef = useRef(0);
 
   const { publish } = usePairChannel(pairCode, "display", (packet) => {
     if (packet.targetDeviceId && packet.targetDeviceId !== deviceIdRef.current) return;
     if (packet.ride !== undefined) setRemoteRide(packet.ride ?? null);
+    if (packet.motion) setRemoteMotion(packet.motion);
     if (packet.settings) {
       setRemoteSettings(packet.settings);
       setHasRemoteSync(true);
+      const signature = JSON.stringify({
+        powered: packet.settings.masterOn,
+        apps: packet.settings.apps,
+        brightness: packet.settings.brightness,
+        seconds: packet.settings.displayDurationSeconds,
+        blank: packet.settings.includeBlank,
+      });
+      if (pairCode && signature !== lastCommandRef.current) {
+        lastCommandRef.current = signature;
+        db.addTabletActivity({
+          id: uid("tablog"),
+          at: Date.now(),
+          pairCode,
+          deviceId: deviceIdRef.current,
+          action: "Driver display command received",
+          details: {
+            powered: packet.settings.masterOn ?? false,
+            platforms: packet.settings.apps?.join(", ") ?? "blank",
+            brightness: packet.settings.brightness,
+            logoSeconds: packet.settings.displayDurationSeconds,
+          },
+        });
+      }
       if (pairCode) {
         localStorage.setItem(`rf:tablet-state:${pairCode.toUpperCase()}`, JSON.stringify({
           settings: packet.settings,
@@ -63,15 +97,16 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
       type: "hello",
       device: {
         id: deviceIdRef.current,
-        name: getTabletDeviceName(),
+        name: getTabletDeviceName(position),
         pairCode,
+        position,
         lastSeen: Date.now(),
       },
     });
     hello();
     const interval = window.setInterval(hello, 8000);
     return () => window.clearInterval(interval);
-  }, [pairCode, preview]);
+  }, [pairCode, preview, position]);
 
   // If the network or driver phone briefly disappears, hold the last authorized
   // display profile locally and reconnect in the background instead of losing control.
@@ -95,17 +130,22 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
   const deviceProfile = settings.deviceProfiles?.length
     ? profileForDevice(settings.deviceProfiles, {
         id: deviceIdRef.current,
-        name: getTabletDeviceName(),
+        name: getTabletDeviceName(position),
         pairCode: pairCode ?? "",
+        position,
         lastSeen: Date.now(),
-      }, pairCode ?? "")
+      }, pairCode ?? "", position)
     : null;
   // Central power must be ON, then each tablet's own profile controls its display.
   const centralPowered = poweredProp !== undefined ? poweredProp : settings.masterOn !== false;
   const powered = centralPowered && (deviceProfile?.powered ?? true);
   const apps: Platform[] = deviceProfile?.apps?.length ? deviceProfile.apps : settings.apps?.length ? settings.apps : ["didi"];
-  const motionGps = useMotion(!preview && !!ride && powered && ["en_route", "stopped"].includes(ride.status), demoStopped);
-  const motion: MotionState = motionGps;
+  const commercialEnabled = deviceProfile?.commercialEnabled ?? false;
+  const campaignIds = deviceProfile?.campaignIds ?? [];
+  const campaigns = (settings.commercialCampaigns ?? []).filter((campaign) => campaignIds.includes(campaign.id) && (campaign.target ?? "both") !== (position === "front" ? "rear" : "front") && campaignIsComplianceReady(campaign) && (!(settings.nswSafetyMode ?? true) || !!deviceProfile?.commercialParkedConfirmed));
+  const motionGps = useMotion(!preview && !!ride && powered && ["en_route", "stopped"].includes(ride.status), demoStopped, settings.stationarySpeedKph ?? 0.5);
+  // The driver's phone is the movement authority. Tablet GPS is only a legacy fallback for ride demos.
+  const motion: MotionState = remoteMotion ?? motionGps;
 
   // Keep the tablet awake + fullscreen while the driver switch is ON,
   // regardless of charge. Released when the driver switches OFF.
@@ -170,10 +210,23 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
         charging: manager.charging,
         updatedAt: Date.now(),
         deviceId: deviceIdRef.current,
-        deviceName: getTabletDeviceName(),
+        deviceName: getTabletDeviceName(position),
         pairCode,
+        position,
       };
       setTabletBattery(next);
+      const previous = lastBatteryLogRef.current;
+      if (pairCode && (previous == null || previous !== next.percentage)) {
+        lastBatteryLogRef.current = next.percentage;
+        db.addTabletActivity({
+          id: uid("tablog"),
+          at: next.updatedAt,
+          pairCode,
+          deviceId: deviceIdRef.current,
+          action: "Battery update",
+          details: { battery: next.percentage, charging: next.charging },
+        });
+      }
       if (pairCode) publishRef.current({ type: "battery", battery: next });
     };
 
@@ -221,9 +274,12 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
   const platform = ride ? getPlatform(ride.platform) : null;
   const labels = t(settings.language);
   const status = ride?.status ?? "idle";
-  // ON with no ride is the normal app-grid state. Only manual OFF should sleep the glass.
-  const sleeping = !powered || status === "complete";
-  const showApps = powered && (!ride || status === "idle");
+  const motionGate = settings.motionSafetyGate ?? true;
+  const stationaryWaitMs = (settings.stationaryWaitSeconds ?? 60) * 1000;
+  const motionAllowed = preview || !motionGate || (motion.allowed && motion.isStationary && motion.stoppedForMs >= stationaryWaitMs);
+  // Moving/unknown motion is intentionally the same pure black low-power screen as OFF.
+  const sleeping = !powered || status === "complete" || !motionAllowed;
+  const showApps = powered && motionAllowed && (!ride || status === "idle");
   const waitingForPhone = !preview && !settingsProp && !!pairCode && !hasRemoteSync;
 
   const daylight = hour >= 7 && hour < 19;
@@ -238,6 +294,79 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
     ? Math.max(0.45, tabletBattery.percentage / 25)
     : 1;
   const brightness = Math.max(18, daylightBrightness * batteryFactor) / 100;
+  const telemetrySignature = `${powered}|${apps.join(",")}|${brightness}|${deviceProfile?.displayDurationSeconds ?? settings.displayDurationSeconds ?? 4.5}|${deviceProfile?.includeBlank ?? settings.includeBlank ?? false}`;
+
+  const handlePlaylistEvent = useCallback((event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string }) => {
+    setActiveContent(event.title);
+    if (!pairCode || preview || event.kind !== "campaign") return;
+    const activity = {
+      id: uid("tablog"),
+      at: Date.now(),
+      pairCode,
+      deviceId: deviceIdRef.current,
+      action: "Commercial campaign displayed",
+      details: { campaign: event.title, campaignId: event.id, nswSafetyMode: settings.nswSafetyMode ?? true },
+    };
+    db.addTabletActivity(activity);
+    publishRef.current({ type: "activity", activity });
+  }, [pairCode, preview, settings.nswSafetyMode, position]);
+
+  useEffect(() => {
+    const nextState: "live" | "blank" = sleeping ? "blank" : "live";
+    if (nextState === lastSafetyStateRef.current) return;
+    lastSafetyStateRef.current = nextState;
+    setActiveContent(nextState === "blank" ? "blank" : activeContent);
+    if (!pairCode || preview) return;
+    const action = nextState === "blank" && motionGate && powered
+      ? "Motion safety gate blanked display"
+      : nextState === "live" && motionGate
+        ? "Motion safety gate released display"
+        : nextState === "blank"
+          ? "Display blanked"
+          : "Display activated";
+    const activity = {
+      id: uid("tablog"),
+      at: Date.now(),
+      pairCode,
+      deviceId: deviceIdRef.current,
+      action,
+      details: { speedKph: motion.speedMps == null ? undefined : Number((motion.speedMps * 3.6).toFixed(1)), stoppedSeconds: Math.floor(motion.stoppedForMs / 1000), gateEnabled: motionGate },
+    };
+    db.addTabletActivity(activity);
+    publishRef.current({ type: "activity", activity });
+  }, [sleeping, powered, motionGate, motion.speedMps, motion.stoppedForMs, pairCode, preview]);
+
+  useEffect(() => {
+    if (!pairCode || preview) return;
+    const report = () => {
+      const telemetry = getDeviceTelemetry({
+        pairCode,
+        position,
+        deviceId: deviceIdRef.current,
+        deviceName: getTabletDeviceName(position),
+        battery: tabletBattery,
+        displayState: powered && motionAllowed ? "live" : "blank",
+        mountedAt: mountedAtRef.current,
+        activeContent,
+      });
+      setLocalTelemetry(telemetry);
+      if (Date.now() - lastTelemetryLogRef.current >= 60_000) {
+        lastTelemetryLogRef.current = Date.now();
+        db.addTabletActivity({
+          id: uid("tablog"),
+          at: telemetry.at,
+          pairCode,
+          deviceId: deviceIdRef.current,
+          action: "Telemetry heartbeat",
+          details: { state: telemetry.displayState, screen: telemetry.screen, network: telemetry.connection, battery: telemetry.battery?.percentage, heapMb: telemetry.jsHeapUsedMb },
+        });
+      }
+      publishRef.current({ type: "telemetry", telemetry });
+    };
+    report();
+    const id = window.setInterval(report, 10_000);
+    return () => window.clearInterval(id);
+  }, [pairCode, position, preview, powered, tabletBattery?.percentage, tabletBattery?.charging, telemetrySignature, activeContent]);
 
   return (
     <div
@@ -276,6 +405,14 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
       ) : showApps ? (
         <AppsFace
           apps={apps}
+          campaigns={campaigns}
+          commercialEnabled={commercialEnabled}
+          nswSafetyMode={settings.nswSafetyMode ?? true}
+          backgroundMode={settings.platformBackgroundMode ?? "brand"}
+          wordmarkEmbossed={settings.wordmarkEmbossed ?? true}
+          fadeTransitions={!!settings.fadeTransitions && !(settings.nswSafetyMode ?? true)}
+          onActiveItem={handlePlaylistEvent}
+          passengerName={position === "front" && deviceProfile?.passengerNameEnabled ? deviceProfile.passengerName : undefined}
           displayDurationSeconds={deviceProfile?.displayDurationSeconds ?? settings.displayDurationSeconds ?? 4.5}
           includeBlank={deviceProfile?.includeBlank ?? settings.includeBlank ?? false}
           blankDurationSeconds={deviceProfile?.blankDurationSeconds ?? settings.blankDurationSeconds ?? 1.5}
@@ -301,6 +438,14 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
         </div>
       )}
 
+      {!preview && !sleeping && settings.diagnosticsOverlay && localTelemetry && (
+        <div className="pointer-events-none absolute top-3 left-3 z-10 max-w-[45vw] rounded bg-black/55 px-2 py-1.5 font-mono text-[9px] leading-relaxed text-white/80">
+          <p>{localTelemetry.screen} · DPR {localTelemetry.devicePixelRatio}</p>
+          <p>{localTelemetry.connection ?? "network n/a"}{localTelemetry.rttMs ? ` · ${localTelemetry.rttMs}ms` : ""}</p>
+          <p>heap {localTelemetry.jsHeapUsedMb ? `${localTelemetry.jsHeapUsedMb}MB` : "n/a"} · up {formatTelemetryUptime(localTelemetry.uptimeSeconds)}</p>
+        </div>
+      )}
+
       {!preview && powered && !isFullscreen && !showApps && (
         <button
           onClick={(e) => {
@@ -316,7 +461,7 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
 
       {taps >= 2 && !preview && (
         <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-[10px] tracking-widest text-cream/80">
-          <Maximize className="h-3 w-3" /> TAP {5 - taps} MORE FOR CONTROLS
+          <Maximize className="h-3 w-3" /> TAP {5 - taps} MORE FOR DEVICE LOG
         </div>
       )}
     </div>
@@ -325,11 +470,27 @@ export function DisplayScreen({ pairCode, ride: rideProp, settings: settingsProp
 
 function AppsFace({
   apps,
+  campaigns,
+  commercialEnabled,
+  nswSafetyMode,
+  backgroundMode,
+  wordmarkEmbossed,
+  fadeTransitions,
+  onActiveItem,
+  passengerName,
   displayDurationSeconds,
   includeBlank,
   blankDurationSeconds,
 }: {
   apps: Platform[];
+  campaigns: CommercialCampaign[];
+  commercialEnabled: boolean;
+  nswSafetyMode: boolean;
+  backgroundMode: "brand" | "black";
+  wordmarkEmbossed: boolean;
+  fadeTransitions: boolean;
+  onActiveItem: (event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string }) => void;
+  passengerName?: string;
   displayDurationSeconds: number;
   includeBlank: boolean;
   blankDurationSeconds: number;
@@ -341,8 +502,27 @@ function AppsFace({
   );
   const [index, setIndex] = useState(0);
 
-  const playlist = includeBlank ? [...visible, null] : visible;
+  const campaignItems = commercialEnabled
+    ? campaigns
+        .filter((campaign) => campaign.enabled && campaign.approved)
+        .filter((campaign) => !nswSafetyMode || campaign.mediaType === "image")
+        .map((campaign) => ({ kind: "campaign" as const, campaign }))
+    : [];
+  const platformItems = visible.map((platform) => ({ kind: "platform" as const, platform }));
+  const playlist = includeBlank ? [...platformItems, ...campaignItems, null] : [...platformItems, ...campaignItems];
   const active = playlist[index % Math.max(playlist.length, 1)];
+
+  useEffect(() => {
+    if (!active) {
+      onActiveItem({ kind: "blank", title: "Blank frame" });
+      return;
+    }
+    if (active.kind === "campaign") {
+      onActiveItem({ kind: "campaign", title: active.campaign.title, id: active.campaign.id });
+      return;
+    }
+    onActiveItem({ kind: "platform", title: active.platform.name, id: active.platform.id });
+  }, [index, active?.kind, active?.kind === "campaign" ? active.campaign.id : active?.kind === "platform" ? active.platform.id : "", onActiveItem]);
 
   useEffect(() => {
     setIndex(0);
@@ -350,7 +530,9 @@ function AppsFace({
 
   useEffect(() => {
     if (playlist.length < 2) return;
-    const duration = active ? displayDurationSeconds : blankDurationSeconds;
+    const duration = active?.kind === "campaign"
+      ? (nswSafetyMode ? Math.max(10, active.campaign.displaySeconds) : active.campaign.displaySeconds)
+      : active ? displayDurationSeconds : blankDurationSeconds;
     const id = window.setTimeout(() => setIndex((current) => (current + 1) % playlist.length), Math.max(0.5, duration) * 1000);
     return () => window.clearTimeout(id);
   }, [index, appKey, includeBlank, playlist.length, !!active, displayDurationSeconds, blankDurationSeconds]);
@@ -358,29 +540,110 @@ function AppsFace({
   if (!active) return <div className="h-full w-full bg-black" />;
 
   return (
-    <div className="flex h-full w-full items-center justify-center overflow-hidden bg-black px-[5vw]">
-      <PlatformLogo key={`${active.id}-${index}`} platform={active} />
+    <div className="flex h-full min-h-0 w-full min-w-0 items-center justify-center overflow-hidden bg-black">
+      {active.kind === "platform" ? <PlatformLogo key={`${active.platform.id}-${index}`} platform={active.platform} backgroundMode={backgroundMode} embossed={wordmarkEmbossed} fade={fadeTransitions} passengerName={passengerName} /> : <CampaignSlide key={`${active.campaign.id}-${index}`} campaign={active.campaign} nswSafetyMode={nswSafetyMode} fade={fadeTransitions} />}
     </div>
   );
 }
 
-function PlatformLogo({ platform }: { platform: (typeof PLATFORMS)[number] }) {
+function CampaignSlide({ campaign, nswSafetyMode, fade }: { campaign: CommercialCampaign; nswSafetyMode: boolean; fade: boolean }) {
+  const staticOnly = nswSafetyMode || campaign.mediaType === "image";
+  return (
+    <div className="relative h-full w-full overflow-hidden bg-black">
+      {staticOnly || campaign.mediaType === "gif" ? (
+        <img src={campaign.assetDataUrl} alt={campaign.title} className={`h-full w-full object-cover ${fade ? "animate-display-fade" : ""}`} />
+      ) : (
+        <video src={campaign.assetDataUrl} className={`h-full w-full object-cover ${fade ? "animate-display-fade" : ""}`} muted autoPlay loop playsInline />
+      )}
+      {!nswSafetyMode && (campaign.discountText || campaign.referralCode) && (
+        <div className="absolute inset-x-0 bottom-0 bg-black/65 px-[4vw] py-[2vh] text-center text-cream">
+          {campaign.discountText && <p className="font-cond text-[4vh] font-bold">{campaign.discountText}</p>}
+          {campaign.referralCode && <p className="mt-1 text-[2vh] tracking-[0.24em]">CODE {campaign.referralCode}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlatformLogo({ platform, backgroundMode, embossed, fade, passengerName }: { platform: (typeof PLATFORMS)[number]; backgroundMode: "brand" | "black"; embossed: boolean; fade: boolean; passengerName?: string }) {
+  const wordmark = platformWordmark(platform);
+  const background = backgroundMode === "black" ? "#000000" : platform.color;
+  const foreground = backgroundMode === "black" ? "#ffffff" : platform.text;
   return (
     <div
       aria-label={platform.name}
-      className="animate-platform-logo grid h-[72vmin] w-[72vmin] place-items-center"
+      className={`${fade ? "animate-display-fade" : ""} grid h-full min-h-0 w-full min-w-0 place-items-center overflow-hidden`}
       style={{
-        background: platform.color,
-        color: platform.text,
-        borderRadius: "18%",
-        boxShadow: `0 0 110px ${platform.accent}88`,
+        background,
+        color: foreground,
       }}
     >
-      <span className="font-cond text-[15vh] font-bold tracking-[0.1em]">
-        {platform.short}
-      </span>
+      <svg
+        viewBox="0 0 1600 900"
+        preserveAspectRatio="xMidYMid meet"
+        className="h-full w-full"
+        role="img"
+        aria-label={`${platform.name} platform logo`}
+      >
+        <defs>
+          <filter id={`shadow-${platform.id}`} x="-20%" y="-30%" width="140%" height="160%">
+            <feDropShadow dx="0" dy="20" stdDeviation="18" floodColor="#000000" floodOpacity={embossed ? "0.65" : "0.24"} />
+          </filter>
+        </defs>
+        <g filter={`url(#shadow-${platform.id})`}>
+          {embossed && <text
+            x="800"
+            y="520"
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="#000000"
+            opacity="0.48"
+            fontFamily="Arial Black, Arial, sans-serif"
+            fontSize={wordmark.length > 8 ? 176 : wordmark.length > 5 ? 238 : 300}
+            fontWeight="900"
+            letterSpacing={wordmark.length > 8 ? "-6" : "-10"}
+          >{wordmark}</text>}
+          <text
+            x="800"
+            y={embossed ? "502" : "510"}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill={foreground}
+            fontFamily="Arial Black, Arial, sans-serif"
+            fontSize={wordmark.length > 8 ? 176 : wordmark.length > 5 ? 238 : 300}
+            fontWeight="900"
+            letterSpacing={wordmark.length > 8 ? "-6" : "-10"}
+          >
+            {wordmark}
+          </text>
+          {passengerName && <text x="800" y="700" textAnchor="middle" fill={foreground} opacity="0.88" fontFamily="Arial, sans-serif" fontSize="74" fontWeight="600" letterSpacing="6">{passengerName.toUpperCase()}</text>}
+        </g>
+      </svg>
     </div>
   );
+}
+
+function platformWordmark(platform: (typeof PLATFORMS)[number]) {
+  const marks: Partial<Record<Platform, string>> = {
+    didi: "DiDi",
+    indrive: "inDrive",
+    freenow: "FREE NOW",
+    ubereats: "Uber Eats",
+    doordash: "DoorDash",
+    deliveroo: "deliveroo",
+    foodpanda: "foodpanda",
+    justeat: "Just Eat",
+  };
+  return marks[platform.id] ?? platform.name;
+}
+
+function campaignIsComplianceReady(campaign: CommercialCampaign) {
+  const legal = campaign.legal;
+  if (!legal) return false;
+  const consents = [legal.appOwner, legal.driver, legal.vehicleOwner, legal.campaignOwner, legal.trademarkAuthorization, legal.safetyAssessment];
+  const consentReady = consents.every((consent) => consent.confirmed && consent.signerName.trim() && consent.agreementReference.trim());
+  const referralReady = !campaign.referralCode || Boolean(legal.merchantName.trim() && legal.offerExpiry && legal.privacyPolicyUrl && legal.qrTermsConfirmed && legal.noRiderDataWithoutConsent);
+  return consentReady && referralReady;
 }
 
 function WaitingFace({ pairCode }: { pairCode?: string }) {
@@ -653,10 +916,53 @@ function getTabletDeviceId() {
   return next;
 }
 
-function getTabletDeviceName() {
+function getTabletDeviceName(position: "rear" | "front" = "rear") {
   const ua = navigator.userAgent;
   const android = ua.match(/Android[^;]*;\s*([^;)]+)/i)?.[1]?.trim();
-  return android ? `Android · ${android}` : "Rear tablet";
+  const label = position === "front" ? "Front tablet" : "Rear tablet";
+  return android ? `${label} · Android ${android}` : label;
+}
+
+function getDeviceTelemetry(input: {
+  pairCode: string;
+  position: "rear" | "front";
+  deviceId: string;
+  deviceName: string;
+  battery: TabletBattery | null;
+  displayState: "live" | "blank" | "waiting";
+  mountedAt: number;
+  activeContent?: string;
+}): DeviceTelemetry {
+  const nav = navigator as Navigator & {
+    deviceMemory?: number;
+    connection?: { effectiveType?: string; downlink?: number; rtt?: number };
+  };
+  const perf = performance as Performance & { memory?: { usedJSHeapSize?: number } };
+  return {
+    deviceId: input.deviceId,
+    deviceName: input.deviceName,
+    pairCode: input.pairCode,
+    position: input.position,
+    at: Date.now(),
+    displayState: input.displayState,
+    battery: input.battery ?? undefined,
+    screen: `${window.screen.width}×${window.screen.height}`,
+    devicePixelRatio: window.devicePixelRatio,
+    visibility: document.visibilityState === "visible" ? "visible" : "hidden",
+    connection: nav.connection?.effectiveType,
+    downlinkMbps: nav.connection?.downlink,
+    rttMs: nav.connection?.rtt,
+    deviceMemoryGb: nav.deviceMemory,
+    jsHeapUsedMb: perf.memory?.usedJSHeapSize ? Math.round(perf.memory.usedJSHeapSize / 1024 / 1024) : undefined,
+    uptimeSeconds: Math.round((Date.now() - input.mountedAt) / 1000),
+    activeContent: input.activeContent,
+  };
+}
+
+function formatTelemetryUptime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m${remainder}s` : `${remainder}s`;
 }
 
 export function useDisplayClock(active: boolean) {
