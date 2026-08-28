@@ -14,14 +14,23 @@ Frontend only. Driver booth, rides, display settings and phone↔tablet pairing 
 | `#/review` | Review checklist |
 | `#/demo` | Cinematic pickup of Sarah |
 | `#/login` | Driver booth |
-| `#/display/7K2M9Q` | Full-screen rear glass |
-| `#/download` | **Download the full source as a ZIP** |
+| `#/display/7K2M9Q` | Rear tablet authorization/display route |
+| `#/forgot-password` | Local password reset request form |
 
-On the live preview, open **`#/download`**. The browser saves `Rideshare-Retroflectivapp.zip`.
+The dedicated QR/tablet receiver uses:
 
-After the code is on GitHub, this official archive also works:
+```text
+https://YOUR-APP-URL/?mode=tablet&display=PAIRCODE
+```
 
-https://github.com/Raheelatta1984/Rideshare-Retroflectivapp/archive/refs/heads/main.zip
+## Owner Source Archive
+
+The complete source archive is available only after login through **Booth → Owner Source Vault** for:
+
+- `tic.raheel@gmail.com`
+- `driver@retroflex.app` / `demo1234`
+
+The download is generated in the authorized browser session as `Rideshare-Retroflectivapp.zip`.
 
 **Demo booth**
 
@@ -57,6 +66,8 @@ git push -u origin main --force
 
 Include hidden folders **`.devcontainer`** and **`.github`**. Those are what make Codespaces and Pages work.
 
+For a safe mobile Codespaces update or detached-HEAD recovery, see [MOBILE-CODESPACES.md](./MOBILE-CODESPACES.md).
+
 ## 2. Open GitHub Codespaces
 
 One click after the push:
@@ -75,6 +86,16 @@ npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
 Then open `#/lab` on the forwarded URL.
+
+### Detached HEAD On Mobile
+
+If a Codespace opens with a detached HEAD, do not commit directly. The full mobile recovery procedure is in [MOBILE-CODESPACES.md](./MOBILE-CODESPACES.md). From the project root, run:
+
+```bash
+bash scripts/recover-main.sh
+```
+
+It creates a rescue branch, returns to `main`, merges the preserved work, installs dependencies, and verifies the build.
 
 ## 3. Public demo on GitHub Pages
 
