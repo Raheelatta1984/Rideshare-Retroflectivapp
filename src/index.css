@@ -1,0 +1,290 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Archivo Black", "Arial Black", sans-serif;
+  --font-cond: "Oswald", Impact, sans-serif;
+  --color-ink: #050505;
+  --color-ink-2: #0c0c0d;
+  --color-panel: #111113;
+  --color-line: #232326;
+  --color-amber: #e8a317;
+  --color-amber-2: #ffc44d;
+  --color-copper: #c47b3a;
+  --color-cream: #f4ede1;
+  --color-mist: #9a958c;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: #050505;
+  color: #f4ede1;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+::selection {
+  background: #e8a317;
+  color: #050505;
+}
+
+.font-display {
+  font-family: "Archivo Black", "Arial Black", sans-serif;
+  letter-spacing: -0.04em;
+}
+
+.font-cond {
+  font-family: "Oswald", Impact, sans-serif;
+}
+
+.grain {
+  position: relative;
+}
+
+.grain::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.09;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.amber-line {
+  background: linear-gradient(90deg, transparent, #e8a317, transparent);
+}
+
+.scan-line {
+  animation: scan 1.6s ease-in-out infinite;
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(120vh);
+    opacity: 0;
+  }
+}
+
+@keyframes wakeFlood {
+  0% {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  40% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0.15;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes nameSlam {
+  0% {
+    opacity: 0;
+    transform: scale(0.72) translateY(18px);
+    filter: blur(10px);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.04) translateY(0);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes flashArrive {
+  0%,
+  100% {
+    background: #050505;
+  }
+  15%,
+  45% {
+    background: #fff7e6;
+  }
+  30%,
+  60% {
+    background: #050505;
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.7);
+    opacity: 0.9;
+  }
+}
+
+@keyframes ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes glowPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 163, 23, 0.0), 0 0 40px rgba(232, 163, 23, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(232, 163, 23, 0.0), 0 0 70px rgba(232, 163, 23, 0.28);
+  }
+}
+
+@keyframes platformLogoEnter {
+  0% {
+    opacity: 0;
+    transform: scale(0.64) rotate(-8deg);
+    filter: blur(18px);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.045) rotate(1.2deg);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes displayFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ringTick {
+  from {
+    stroke-dashoffset: 283;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-name {
+  animation: nameSlam 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-flood {
+  animation: wakeFlood 1.1s ease-out both;
+}
+
+.animate-breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+.animate-arrive {
+  animation: flashArrive 0.9s ease-in-out 1;
+}
+
+.animate-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+.animate-glow {
+  animation: glowPulse 3s ease-in-out infinite;
+}
+
+.animate-platform-logo {
+  animation: platformLogoEnter 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Only enabled outside NSW Safety Mode. Keep the transition subtle and optional. */
+.animate-display-fade {
+  animation: displayFade 360ms ease-out both;
+}
+
+.marquee-track {
+  animation: ticker 22s linear infinite;
+}
+
+.hide-scroll {
+  scrollbar-width: none;
+}
+.hide-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.phone-frame {
+  border-radius: 2.2rem;
+  border: 3px solid #2a2a2e;
+  box-shadow:
+    0 0 0 1px #111,
+    0 30px 80px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 2px #000;
+}
+
+.tablet-frame {
+  border-radius: 1.1rem;
+  border: 10px solid #161618;
+  box-shadow:
+    0 0 0 1px #000,
+    0 40px 100px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px #2c2c30;
+}
+
+.display-name {
+  font-family: "Archivo Black", "Arial Black", sans-serif;
+  line-height: 0.82;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+input[type="range"] {
+  accent-color: #e8a317;
+}
