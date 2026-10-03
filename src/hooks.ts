@@ -34,3 +34,20 @@ export function useNow(interval = 1000): number {
 
   return now;
 }
+
+export async function requestWakeLock(): Promise<{ release: () => Promise<void> } | null> {
+  if (typeof navigator === "undefined" || !("wakeLock" in navigator)) {
+    return null;
+  }
+
+  try {
+    const lock = await (navigator as any).wakeLock.request("screen");
+    return {
+      release: async () => {
+        if (lock) await lock.release();
+      },
+    };
+  } catch {
+    return null;
+  }
+}
