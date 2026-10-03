@@ -21,6 +21,7 @@ import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DevicePr
 import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice } from "../lib/devices";
 import { canDownloadSource, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
 import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
+import { campaignDraftIssues, campaignScheduleLabel } from "../lib/signage";
 import { Logo } from "./Logo";
 import { DisplayScreen } from "./DisplayScreen";
 import { useNow } from "../hooks";
@@ -998,6 +999,12 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
   const [discountText, setDiscountText] = useState("");
   const [referralCode, setReferralCode] = useState("");
   const [campaignTarget, setCampaignTarget] = useState<"both" | "rear" | "front">("both");
+  // Phase 1 plan fields: approved remote asset, landing URL, schedule window, brightness cap.
+  const [assetUrl, setAssetUrl] = useState("");
+  const [landingUrl, setLandingUrl] = useState("");
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
+  const [brightnessCap, setBrightnessCap] = useState(100);
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [qaTarget, setQaTarget] = useState(settings.enterpriseQa?.targetDevices ?? 100000);
   const [qaDurationSeconds, setQaDurationSeconds] = useState(settings.enterpriseQa?.runDurationSeconds ?? 45);
@@ -1094,11 +1101,31 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
       setCampaignError(issues[0]);
       return;
     }
+    const draftIssues = campaignDraftIssues({
+      title,
+      assetDataUrl,
+      assetUrl,
+      landingUrl,
+      startAt: startAt ? new Date(startAt).getTime() : undefined,
+      endAt: endAt ? new Date(endAt).getTime() : undefined,
+      brightnessCap,
+      mediaType,
+      nswSafetyMode: nswSafety,
+    });
+    if (draftIssues.length) {
+      setCampaignError(draftIssues[0]);
+      return;
+    }
     const campaign: CommercialCampaign = {
       id: `cmp_${Date.now().toString(36)}`,
       title: title.trim(),
       mediaType,
-      assetDataUrl,
+      assetDataUrl: assetDataUrl || undefined,
+      assetUrl: assetUrl.trim() || undefined,
+      landingUrl: landingUrl.trim() || undefined,
+      startAt: startAt ? new Date(startAt).getTime() : undefined,
+      endAt: endAt ? new Date(endAt).getTime() : undefined,
+      brightnessCap: brightnessCap < 100 ? brightnessCap : undefined,
       discountText: nswSafety ? undefined : discountText.trim() || undefined,
       referralCode: nswSafety ? undefined : referralCode.trim() || undefined,
       displaySeconds: nswSafety ? Math.max(10, displaySeconds) : Math.max(0.5, displaySeconds),
@@ -1227,6 +1254,14 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
           </div>
           {!nswSafety && <div className="grid grid-cols-2 gap-2"><input value={discountText} onChange={(event) => setDiscountText(event.target.value)} placeholder="Discount text" className="rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" /><input value={referralCode} onChange={(event) => setReferralCode(event.target.value)} placeholder="Referral code" className="rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" /></div>}
           <label className="block text-xs">Campaign dwell · {displaySeconds.toFixed(1)} sec<input type="range" min={nswSafety ? 10 : 0.5} max={60} step={0.5} value={displaySeconds} onChange={(event) => setDisplaySeconds(Number(event.target.value))} className="mt-2 w-full" /></label>
+          {nswSafety && <p className="text-[10px] text-mist">NSW Safety Mode raises dwell to a 10s minimum (25s at 80 km/h or above).</p>}
+          <input value={assetUrl} onChange={(event) => setAssetUrl(event.target.value)} placeholder="Approved asset URL (https:// or leave blank for the uploaded file)" className="w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" />
+          <input value={landingUrl} onChange={(event) => setLandingUrl(event.target.value)} placeholder="Landing URL for the offer (https://...)" className="w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-[10px] text-mist">Starts (optional)<input type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} className="mt-1 w-full rounded-xl border border-line bg-ink px-3 py-2 text-xs text-cream outline-none focus:border-amber" /></label>
+            <label className="block text-[10px] text-mist">Ends (optional)<input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} className="mt-1 w-full rounded-xl border border-line bg-ink px-3 py-2 text-xs text-cream outline-none focus:border-amber" /></label>
+          </div>
+          <label className="block text-xs">Brightness cap · {brightnessCap}%<input type="range" min={18} max={100} step={1} value={brightnessCap} onChange={(event) => setBrightnessCap(Number(event.target.value))} className="mt-2 w-full" /></label>
           <div className="rounded-2xl border border-amber/30 bg-amber/10 p-3 text-xs leading-relaxed text-mist">
             <p className="font-medium text-cream">Written permission register</p>
             <p className="mt-1">Record the signed agreement reference and signer for the app owner, driver, display vehicle owner, campaign company/agency, trademark authorization and safety assessment. A physical sticker or possession of a logo is not automatically a trademark/display licence; record explicit authorization from the rights holder.</p>
@@ -1269,7 +1304,7 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
           <button onClick={addCampaign} className="rounded-xl bg-amber px-4 py-2 text-sm font-semibold text-ink">Approve campaign asset</button>
         </div>
         <div className="mt-5 space-y-2">
-          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
+          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s · {campaignScheduleLabel(campaign)} · cap {campaign.brightnessCap ?? 100}%</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
         </div>
       </div>
 

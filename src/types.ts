@@ -209,7 +209,17 @@ export interface CommercialCampaign {
   title: string;
   enabled: boolean;
   approved: boolean;
-  assetDataUrl: string;
+  /** Cached pilot asset (data URL). Optional when an approved assetUrl is set. */
+  assetDataUrl?: string;
+  /** Approved remote asset — signed URL in the Phase 2 backend. */
+  assetUrl?: string;
+  /** Where a scan/click should land. Never shown as a QR under NSW Safety Mode. */
+  landingUrl?: string;
+  /** Schedule window (epoch ms). Undefined = always eligible. */
+  startAt?: number;
+  endAt?: number;
+  /** Per-campaign brightness ceiling (percent, 18-100). */
+  brightnessCap?: number;
   /** "gif" is only allowed when NSW safety mode is off. */
   mediaType: "image" | "video" | "gif";
   displaySeconds: number;

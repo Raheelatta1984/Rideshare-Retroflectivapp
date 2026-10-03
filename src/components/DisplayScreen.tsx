@@ -3,6 +3,15 @@ import { Battery, BatteryCharging, Maximize, RotateCcw } from "lucide-react";
 import type { CommercialCampaign, DeviceTelemetry, DisplaySettings, MotionState, Ride, TabletBattery } from "../types";
 import { db, defaultSettings } from "../lib/storage";
 import { PLATFORMS, getPlatform } from "../lib/platforms";
+import {
+  buildPlaylist,
+  campaignBrightness,
+  campaignAssetSrc,
+  isSafeAssetUrl,
+  effectiveMediaType,
+  selectCampaigns,
+  slideDurationSeconds,
+} from "../lib/signage";
 import { profileForDevice } from "../lib/devices";
 import { t } from "../lib/i18n";
 import { usePairChannel } from "../lib/sync";
@@ -34,6 +43,8 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   const [remoteSettings, setRemoteSettings] = useState<DisplaySettings>(defaultSettings());
   const [remoteMotion, setRemoteMotion] = useState<MotionState | null>(null);
   const [taps, setTaps] = useState(0);
+  // null = the current slide is not a campaign, so no extra brightness cap applies.
+  const [activeBrightnessCap, setActiveBrightnessCap] = useState<number | null>(null);
   const [tabletBattery, setTabletBattery] = useState<TabletBattery | null>(null);
   const [localTelemetry, setLocalTelemetry] = useState<DeviceTelemetry | null>(null);
   const [flash, setFlash] = useState(false);
@@ -143,7 +154,16 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   const apps: string[] = deviceProfile?.apps?.length ? deviceProfile.apps : settings.apps?.length ? settings.apps : ["didi"];
   const commercialEnabled = deviceProfile?.commercialEnabled ?? false;
   const campaignIds = deviceProfile?.campaignIds ?? [];
-  const campaigns = (settings.commercialCampaigns ?? []).filter((campaign) => campaignIds.includes(campaign.id) && (campaign.target ?? "both") !== (position === "front" ? "rear" : "front") && campaignIsComplianceReady(campaign) && (!(settings.nswSafetyMode ?? true) || !!deviceProfile?.commercialParkedConfirmed));
+  // Only campaigns assigned to this device, inside their schedule window, with a
+  // usable asset and complete consents. The engine reports *why* one is blocked.
+  const campaigns = selectCampaigns(
+    (settings.commercialCampaigns ?? []).filter((campaign) => campaignIds.includes(campaign.id)),
+    {
+      nswSafetyMode: settings.nswSafetyMode ?? true,
+      position,
+      parkedConfirmed: deviceProfile?.commercialParkedConfirmed,
+    },
+  );
   const motionGps = useMotion(!preview && !!ride && powered && ["en_route", "stopped"].includes(ride.status), demoStopped, settings.stationarySpeedKph ?? 0.5);
   // The driver's phone is the movement authority. Tablet GPS is only a legacy fallback for ride demos.
   const motion: MotionState = remoteMotion ?? motionGps;
@@ -294,11 +314,18 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   const batteryFactor = tabletBattery && tabletBattery.percentage <= 20
     ? Math.max(0.45, tabletBattery.percentage / 25)
     : 1;
-  const brightness = Math.max(18, daylightBrightness * batteryFactor) / 100;
+  const baseBrightness = Math.max(18, daylightBrightness * batteryFactor);
+  // A campaign may lower brightness further (plan: day/night + per-campaign caps).
+  const brightness = campaignBrightness(baseBrightness, {
+    campaign: activeBrightnessCap === null ? undefined : { brightnessCap: activeBrightnessCap },
+    isNight: !daylight,
+  }) / 100;
   const telemetrySignature = `${powered}|${apps.join(",")}|${brightness}|${deviceProfile?.displayDurationSeconds ?? settings.displayDurationSeconds ?? 4.5}|${deviceProfile?.includeBlank ?? settings.includeBlank ?? false}`;
 
-  const handlePlaylistEvent = useCallback((event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string }) => {
+  const handlePlaylistEvent = useCallback((event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string; brightnessCap?: number }) => {
     setActiveContent(event.title);
+    // null = no campaign on screen, so no extra cap applies.
+    setActiveBrightnessCap(event.kind === "campaign" ? (event.brightnessCap ?? 100) : null);
     if (!pairCode || preview || event.kind !== "campaign") return;
     const activity = {
       id: uid("tablog"),
@@ -417,6 +444,7 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
           displayDurationSeconds={deviceProfile?.displayDurationSeconds ?? settings.displayDurationSeconds ?? 4.5}
           includeBlank={deviceProfile?.includeBlank ?? settings.includeBlank ?? false}
           blankDurationSeconds={deviceProfile?.blankDurationSeconds ?? settings.blankDurationSeconds ?? 1.5}
+          speedKph={motion.isStationary ? 0 : (motion.speedMps ?? 0) * 3.6}
         />
       ) : status === "incoming" ? (
         <IncomingFace ride={ride!} labels={labels} platformName={platform!.short} accent={platform!.accent} palette={palette} />
@@ -482,6 +510,7 @@ function AppsFace({
   displayDurationSeconds,
   includeBlank,
   blankDurationSeconds,
+  speedKph = 0,
 }: {
   apps: string[];
   campaigns: CommercialCampaign[];
@@ -490,11 +519,13 @@ function AppsFace({
   backgroundMode: "brand" | "black";
   wordmarkEmbossed: boolean;
   fadeTransitions: boolean;
-  onActiveItem: (event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string }) => void;
+  onActiveItem: (event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string; brightnessCap?: number }) => void;
   passengerName?: string;
   displayDurationSeconds: number;
   includeBlank: boolean;
   blankDurationSeconds: number;
+  /** Current speed, used for the NSW dwell floor. */
+  speedKph?: number;
 }) {
   const appKey = apps.join("|");
   const visible = useMemo(
@@ -503,14 +534,19 @@ function AppsFace({
   );
   const [index, setIndex] = useState(0);
 
-  const campaignItems = commercialEnabled
-    ? campaigns
-        .filter((campaign) => campaign.enabled && campaign.approved)
-        .filter((campaign) => !nswSafetyMode || campaign.mediaType === "image")
-        .map((campaign) => ({ kind: "campaign" as const, campaign }))
-    : [];
-  const platformItems = visible.map((platform) => ({ kind: "platform" as const, platform }));
-  const playlist = includeBlank ? [...platformItems, ...campaignItems, null] : [...platformItems, ...campaignItems];
+  // Plan order: platform logo → blank → campaign → blank (blanks are the
+  // OLED-black low-power intervals and collapse when there is nothing between them).
+  const playlist = useMemo(
+    () =>
+      buildPlaylist({
+        platforms: visible,
+        campaigns,
+        commercialEnabled,
+        nswSafetyMode,
+        includeBlank,
+      }),
+    [appKey, campaigns, commercialEnabled, nswSafetyMode, includeBlank],
+  );
   const active = playlist[index % Math.max(playlist.length, 1)];
 
   useEffect(() => {
@@ -519,10 +555,19 @@ function AppsFace({
       return;
     }
     if (active.kind === "campaign") {
-      onActiveItem({ kind: "campaign", title: active.campaign.title, id: active.campaign.id });
+      onActiveItem({
+        kind: "campaign",
+        title: active.campaign.title,
+        id: active.campaign.id,
+        brightnessCap: active.campaign.brightnessCap,
+      });
       return;
     }
-    onActiveItem({ kind: "platform", title: active.platform.name, id: active.platform.id });
+    onActiveItem({
+      kind: "platform",
+      title: active.kind === "platform" ? active.platform.name : "",
+      id: active.kind === "platform" ? active.platform.id : undefined,
+    });
   }, [index, active?.kind, active?.kind === "campaign" ? active.campaign.id : active?.kind === "platform" ? active.platform.id : "", onActiveItem]);
 
   useEffect(() => {
@@ -531,14 +576,17 @@ function AppsFace({
 
   useEffect(() => {
     if (playlist.length < 2) return;
-    const duration = active?.kind === "campaign"
-      ? (nswSafetyMode ? Math.max(10, active.campaign.displaySeconds) : active.campaign.displaySeconds)
-      : active ? displayDurationSeconds : blankDurationSeconds;
-    const id = window.setTimeout(() => setIndex((current) => (current + 1) % playlist.length), Math.max(0.5, duration) * 1000);
+    const duration = slideDurationSeconds(active, {
+      platformSeconds: displayDurationSeconds,
+      blankSeconds: blankDurationSeconds,
+      nswSafetyMode,
+      speedKph,
+    });
+    const id = window.setTimeout(() => setIndex((current) => (current + 1) % playlist.length), duration * 1000);
     return () => window.clearTimeout(id);
-  }, [index, appKey, includeBlank, playlist.length, !!active, displayDurationSeconds, blankDurationSeconds]);
+  }, [index, appKey, includeBlank, playlist.length, !!active, displayDurationSeconds, blankDurationSeconds, nswSafetyMode, speedKph]);
 
-  if (!active) return <div className="h-full w-full bg-black" />;
+  if (!active || active.kind === "blank") return <div className="h-full w-full bg-black" />;
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 items-center justify-center overflow-hidden bg-black">
@@ -548,13 +596,28 @@ function AppsFace({
 }
 
 function CampaignSlide({ campaign, nswSafetyMode, fade }: { campaign: CommercialCampaign; nswSafetyMode: boolean; fade: boolean }) {
-  const staticOnly = nswSafetyMode || campaign.mediaType === "image";
+  const [failed, setFailed] = useState(false);
+  const src = campaignAssetSrc(campaign);
+  const media = effectiveMediaType(campaign, nswSafetyMode);
+
+  // Plan: "a black default image on failure". A campaign with no usable asset,
+  // a rejected asset URL or a failed load renders the black frame instead of a
+  // browser error icon.
+  if (!src || !isSafeAssetUrl(src) || failed) {
+    return <div role="img" aria-label={`${campaign.title} unavailable`} className="h-full w-full bg-black" />;
+  }
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-black">
-      {staticOnly || campaign.mediaType === "gif" ? (
-        <img src={campaign.assetDataUrl} alt={campaign.title} className={`h-full w-full object-cover ${fade ? "animate-display-fade" : ""}`} />
+      {media === "image" || media === "gif" ? (
+        <img
+          src={src}
+          alt={campaign.title}
+          onError={() => setFailed(true)}
+          className={`h-full w-full object-cover ${fade ? "animate-display-fade" : ""}`}
+        />
       ) : (
-        <video src={campaign.assetDataUrl} className={`h-full w-full object-cover ${fade ? "animate-display-fade" : ""}`} muted autoPlay loop playsInline />
+        <video src={src} onError={() => setFailed(true)} className={`h-full w-full object-cover ${fade ? "animate-display-fade" : ""}`} muted autoPlay loop playsInline />
       )}
       {!nswSafetyMode && (campaign.discountText || campaign.referralCode) && (
         <div className="absolute inset-x-0 bottom-0 bg-black/65 px-[4vw] py-[2vh] text-center text-cream">
@@ -636,15 +699,6 @@ function platformWordmark(platform: (typeof PLATFORMS)[number]) {
     justeat: "Just Eat",
   };
   return marks[platform.id] ?? platform.name;
-}
-
-function campaignIsComplianceReady(campaign: CommercialCampaign) {
-  const legal = campaign.legal;
-  if (!legal) return false;
-  const consents = [legal.appOwner, legal.driver, legal.vehicleOwner, legal.campaignOwner, legal.trademarkAuthorization, legal.safetyAssessment];
-  const consentReady = consents.every((consent) => consent.confirmed && consent.signerName.trim() && consent.agreementReference.trim());
-  const referralReady = !campaign.referralCode || Boolean((legal.merchantName ?? "").trim() && legal.offerExpiry && legal.privacyPolicyUrl && legal.qrTermsConfirmed && legal.noRiderDataWithoutConsent);
-  return consentReady && referralReady;
 }
 
 function WaitingFace({ pairCode }: { pairCode?: string }) {
