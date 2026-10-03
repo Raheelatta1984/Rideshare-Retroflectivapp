@@ -1,54 +1,28 @@
-import path from "path";
-import { fileURLToPath } from "url";
-import { promises as fs } from "node:fs";
-import type { Plugin } from "vite";
-import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
-import { viteSingleFile } from "vite-plugin-singlefile";
-import { buildZipBuffer, ZIP_NAME } from "./scripts/build-zip.mjs";
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "types": ["node", "vite/client", "vitest/globals"],
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
 
-function zipPlugin(): Plugin {
-  return {
-    name: "repo-zip-emit",
-    apply: "build",
-    async closeBundle() {
-      try {
-        const buffer = await buildZipBuffer();
-        const outDir = path.resolve(__dirname, "dist");
-        await fs.mkdir(outDir, { recursive: true });
-        await fs.writeFile(path.join(outDir, ZIP_NAME), buffer);
-
-        const publicDir = path.resolve(__dirname, "public");
-        await fs.mkdir(publicDir, { recursive: true });
-        await fs.writeFile(path.join(publicDir, ZIP_NAME), buffer);
-      } catch (err) {
-        console.warn("zip emit failed", err);
-      }
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
     },
-  };
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src", "vite.config.ts", "src/**/*.ts", "src/**/*.tsx"]
 }
-
-export default defineConfig({
-  plugins: [react(), tailwindcss(), viteSingleFile(), zipPlugin()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "src"),
-    },
-  },
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "html", "json-summary"],
-      include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/**/*.d.ts", "src/test/**"],
-    },
-  },
-});
