@@ -112,16 +112,20 @@ function signedConsent(signerName: string, agreementReference: string, email?: s
  * above the NSW floor, all six consents signed, approved in both the local
  * settings and the backend, no referral terms and no geographic rule.
  */
-export function buildSeedCampaign(now: number = Date.now()): CommercialCampaign {
+export function buildSeedCampaign(
+  now: number = Date.now(),
+  complianceMode: "regulated" | "unregulated" = "regulated"
+): CommercialCampaign {
   const reference = "RF-DEMO-0001";
   return {
     id: SEED_CAMPAIGN_ID,
-    title: "Demo spot — Retroflex",
+    title: complianceMode === "unregulated" ? "Demo spot — unregulated test" : "Demo spot — Retroflex",
     mediaType: "image",
     assetDataUrl: seedCampaignAssetDataUrl(),
     displaySeconds: 12,
     enabled: true,
     approved: true,
+    complianceMode,
     approval: { state: "approved", reviewer: "seeded demo campaign", reviewedAt: now },
     target: "rear",
     brightnessCap: 80,

@@ -1036,8 +1036,25 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
   const qaLoggedPhases = useRef<Set<QaPhaseId>>(new Set());
   const qaLoggedCheckpoints = useRef<Set<number>>(new Set());
   const nswSafety = settings.nswSafetyMode ?? true;
+  const legalPack = settings.legalPackEnabled ?? true;
   const campaigns = settings.commercialCampaigns ?? [];
   const [seedNote, setSeedNote] = useState<string | null>(null);
+
+  /**
+   * The legal & approval pack master switch. Turning it off is a deliberate,
+   * confirmed act: signage then displays without consent records, agreements or
+   * an approval step, and everything created that way is stamped unregulated.
+   */
+  const toggleLegalPack = (next: boolean) => {
+    if (!next && !window.confirm(
+      "Turn the legal & approval pack OFF?\n\nCampaigns will display without consent records, agreements, trademark authorization or an approval step, and will be marked UNREGULATED on the glass and in the console.\n\nThis changes what the app enforces, not what the law requires. Use it for testing, then switch it back on."
+    )) return;
+    saveSettings({ legalPackEnabled: next });
+    recordActivity({
+      action: next ? "Legal & approval pack enabled" : "Legal & approval pack disabled",
+      details: { nswSafetyMode: nswSafety, legalPackEnabled: next, by: driver?.email ?? "unknown" },
+    });
+  };
 
   /**
    * One-click test setup: a pre-approved demo campaign plus a commercial rear
@@ -1046,7 +1063,7 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
    * a patch into the settings it already has).
    */
   const seedDemoCampaign = () => {
-    const campaign = buildSeedCampaign();
+    const campaign = buildSeedCampaign(Date.now(), legalPack ? "regulated" : "unregulated");
     const nextCampaigns = [...campaigns.filter((item) => item.id !== campaign.id), campaign];
     const profiles = driver
       ? enableCommercialOnProfile(settings.deviceProfiles ?? [], {
@@ -1056,8 +1073,11 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
         })
       : settings.deviceProfiles ?? [];
     saveSettings({ commercialCampaigns: nextCampaigns, deviceProfiles: profiles });
-    // Mirror it as already approved so the playlist and the backend agree.
-    void getBackend().campaigns.upsert(campaign).catch(() => undefined);
+    // Mirror it so the playlist and the backend agree. Unregulated content is
+    // recorded as a draft rather than a fake approval.
+    void getBackend()
+      .campaigns.upsert(legalPack ? campaign : { ...campaign, approval: { state: "draft" }, approved: false })
+      .catch(() => undefined);
     recordActivity({
       action: "Commercial campaign seeded",
       details: { campaign: campaign.title, pairCode: driver?.pairCode ?? "none", campaignId: campaign.id },
@@ -1065,7 +1085,7 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
     const stationaryWait = settings.stationaryWaitSeconds ?? 60;
     setSeedNote(
       driver
-        ? `Seeded “${campaign.title}”: six consents signed, approval granted, rear profile for ${driver.pairCode} switched to a commercial playlist. Two more switches decide whether the glass is black or lit — the display must be ON (Live tab power switch) and the app must treat the car as parked (motion gate; ${stationaryWait}s stationary wait, default 60). Open ?mode=tablet&display=${driver.pairCode} on the tablet, or #/display/${driver.pairCode} in a second tab. For a parked desk test, turn off “Display only while stopped” in this tab — otherwise the glass intentionally stays black until the app believes the car is parked for ${stationaryWait}s.`
+        ? `Seeded “${campaign.title}” ${legalPack ? ": six consents signed, approval granted," : "(unregulated — no consents, no approval),"} rear profile for ${driver.pairCode} switched to a commercial playlist. Two more switches decide whether the glass is black or lit — the display must be ON (Live tab power switch) and the app must treat the car as parked (motion gate; ${stationaryWait}s stationary wait, default 60). Open ?mode=tablet&display=${driver.pairCode} on the tablet, or #/display/${driver.pairCode} in a second tab. For a parked desk test, turn off “Display only while stopped” in this tab — otherwise the glass intentionally stays black until the app believes the car is parked for ${stationaryWait}s.`
         : "Seeded the demo campaign. Sign in as a driver with a pair code to assign it to a display."
     );
   };
@@ -1149,10 +1169,14 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
       setCampaignError("Add a campaign title and an approved image asset first.");
       return;
     }
-    const issues = campaignLegalIssues(legal, Boolean(discountText.trim() || referralCode.trim()));
-    if (issues.length) {
-      setCampaignError(issues[0]);
-      return;
+    // With the legal pack off, consent records and agreements are skipped
+    // entirely — the campaign is stamped unregulated instead.
+    if (legalPack) {
+      const issues = campaignLegalIssues(legal, Boolean(discountText.trim() || referralCode.trim()));
+      if (issues.length) {
+        setCampaignError(issues[0]);
+        return;
+      }
     }
     const draftIssues = campaignDraftIssues({
       title,
@@ -1184,6 +1208,8 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
       displaySeconds: nswSafety ? Math.max(10, displaySeconds) : Math.max(0.5, displaySeconds),
       enabled: true,
       approved: true,
+      complianceMode: legalPack ? "regulated" : "unregulated",
+      approval: legalPack ? undefined : { state: "approved", reviewer: "unregulated mode", reviewedAt: Date.now() },
       createdAt: Date.now(),
       updatedAt: Date.now(),
       legal,
@@ -1193,8 +1219,14 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
     recordActivity({ action: "Commercial campaign approved", details: { campaign: campaign.title, mediaType: campaign.mediaType, dwellSeconds: campaign.displaySeconds, nswSafetyMode: nswSafety, merchant: campaign.legal?.merchantName } });
     // Phase 2: mirror the campaign to the backend so the approval workflow and
     // the client portal see it. Local adapter = on-device; Supabase = shared.
+    // An unregulated campaign is mirrored as a draft: the server never records
+    // a fake approval, and its approval guard stays intact.
     void getBackend()
-      .campaigns.upsert({ ...campaign, approval: { state: "pending" }, approved: false })
+      .campaigns.upsert(
+        legalPack
+          ? { ...campaign, approval: { state: "pending" }, approved: false }
+          : { ...campaign, approval: { state: "draft" }, approved: false }
+      )
       .catch(() => undefined);
     setTitle("");
     setAssetDataUrl("");
@@ -1297,7 +1329,20 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
 
       <div className="mt-5 rounded-3xl border border-amber/30 bg-amber/10 p-4 text-sm text-mist">
         <Toggle label="NSW Safety Mode" on={nswSafety} onChange={(nswSafetyMode) => saveSettings({ nswSafetyMode, fadeTransitions: nswSafetyMode ? false : settings.fadeTransitions })} />
+        <div className="mt-3"><Toggle label="Legal & approval pack (NSW / Australia)" on={legalPack} onChange={toggleLegalPack} /></div>
         <div className="mt-3"><Toggle label="Remote diagnostics overlay" on={settings.diagnosticsOverlay ?? false} onChange={(diagnosticsOverlay) => saveSettings({ diagnosticsOverlay })} /></div>
+        {!legalPack && (
+          <div className="mt-3 rounded-2xl border border-rose-400/50 bg-rose-400/10 p-3 text-xs leading-relaxed text-mist">
+            <p className="font-semibold text-rose-200">LEGAL PACK OFF · UNREGULATED MODE</p>
+            <p className="mt-1">Consent records, agreements, trademark authorization, the written permission register, approval and geographic rules are all skipped. New campaigns display as soon as you add them and keep displaying after you switch the pack back on — they stay stamped <span className="text-cream">unregulated</span> and the glass shows a “no legal pack” marker. For testing only. NSW Safety Mode is a separate switch and is still {nswSafety ? "on" : "off"}.</p>
+          </div>
+        )}
+        {legalPack && settings.legalPackEnabled !== undefined && (
+          <p className="mt-3 text-xs leading-relaxed">Full pack: six consent records with signer and agreement reference, trademark authorization, the written permission register, campaign approval before display, referral terms and geographic rules.</p>
+        )}
+        {(settings.unregulatedBadge ?? true) && (
+          <div className="mt-3"><Toggle label="Show “no legal pack” marker on the glass" on={settings.unregulatedBadge ?? true} onChange={(unregulatedBadge) => saveSettings({ unregulatedBadge })} /></div>
+        )}
         <p className="mt-3 leading-relaxed">When enabled: static images only, at least 10 seconds per campaign, no animated/video media, no QR/referral overlay, and black is the failure/blank frame. Confirm permits, vehicle requirements, approval, placement and road-safety compliance with NSW authorities before any public deployment. This app does not grant legal approval.</p>
         <p className="mt-2 text-xs">Diagnostics overlay displays small white device telemetry at upper left for owner QA. Turn it off for any passenger/public-facing deployment.</p>
       </div>
@@ -1344,6 +1389,8 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
             <label className="block text-[10px] text-mist">Ends (optional)<input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} className="mt-1 w-full rounded-xl border border-line bg-ink px-3 py-2 text-xs text-cream outline-none focus:border-amber" /></label>
           </div>
           <label className="block text-xs">Brightness cap · {brightnessCap}%<input type="range" min={18} max={100} step={1} value={brightnessCap} onChange={(event) => setBrightnessCap(Number(event.target.value))} className="mt-2 w-full" /></label>
+{legalPack && (
+          <>
           <div className="rounded-2xl border border-amber/30 bg-amber/10 p-3 text-xs leading-relaxed text-mist">
             <p className="font-medium text-cream">Written permission register</p>
             <p className="mt-1">Record the signed agreement reference and signer for the app owner, driver, display vehicle owner, campaign company/agency, trademark authorization and safety assessment. A physical sticker or possession of a logo is not automatically a trademark/display licence; record explicit authorization from the rights holder.</p>
@@ -1381,12 +1428,21 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
             <button onClick={issueFullAuthorization} className="mt-3 rounded-lg bg-amber px-3 py-2 text-xs font-semibold text-ink">Issue full authorization PDF</button>
             {legal.fullAuthorizationIssuedAt && <p className="mt-2 text-amber">Issued {new Date(legal.fullAuthorizationIssuedAt).toLocaleString()} · {legal.fullAuthorizationDelivery}</p>}
           </div>
+          </>
+        )}
+          {!legalPack && (
+            <div className="rounded-2xl border border-rose-400/40 bg-rose-400/10 p-3 text-xs leading-relaxed text-mist">
+              <p className="font-semibold text-rose-200">NO CONSENTS OR APPROVAL REQUIRED</p>
+              <p className="mt-1">The legal &amp; approval pack is off, so this form skips the six consent records, the trademark authorization, the written permission register, the authorization PDFs and the approval step. Campaigns you add display straight away and are stamped <span className="text-cream">unregulated</span>.</p>
+            </div>
+          )}
+
           {assetDataUrl && <img src={assetDataUrl} alt="Campaign preview" className="max-h-40 w-full rounded-xl object-cover" />}
           {campaignError && <p className="text-xs text-rose-400">{campaignError}</p>}
           <button onClick={addCampaign} className="rounded-xl bg-amber px-4 py-2 text-sm font-semibold text-ink">Approve campaign asset</button>
         </div>
         <div className="mt-5 space-y-2">
-          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s · {campaignScheduleLabel(campaign)} · cap {campaign.brightnessCap ?? 100}%</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
+          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s · {campaignScheduleLabel(campaign)} · cap {campaign.brightnessCap ?? 100}%{campaign.complianceMode === "unregulated" ? " · UNREGULATED (no legal pack)" : ""}</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
         </div>
       </div>
 

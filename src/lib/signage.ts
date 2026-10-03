@@ -212,6 +212,11 @@ export interface CampaignContext {
   location?: GeoPoint;
   /** Treat a missing fix as outside the area (default true for safety). */
   requireLocation?: boolean;
+  /**
+   * Legal & approval pack master switch (separate from the safety mode).
+   * Defaults to true: consents, approval, referral terms and geography apply.
+   */
+  legalPackEnabled?: boolean;
 }
 
 /** Legal terms a referral/discount campaign must carry (plan: "Make QR/referral terms clear"). */
@@ -273,7 +278,15 @@ export function campaignBlockReasons(
   const now = context.now ?? Date.now();
 
   if (!campaign.enabled) reasons.push("disabled");
-  if (!campaignIsApproved(campaign)) reasons.push("not-approved");
+
+  // The legal & approval pack is a separate switch from NSW Safety Mode. When
+  // it is off — or when the campaign was created while it was off — consents,
+  // approval, referral terms and geographic gating do not block the display.
+  // Such a campaign stays stamped "unregulated" so the glass and the console
+  // can mark it as test content.
+  const unregulated = campaignRunsUnregulated(campaign, { legalPackEnabled: context.legalPackEnabled });
+
+  if (!unregulated && !campaignIsApproved(campaign)) reasons.push("not-approved");
 
   // A campaign targeting "both" shows everywhere; otherwise it must match this screen.
   const target = campaign.target ?? "both";
@@ -283,7 +296,7 @@ export function campaignBlockReasons(
   if (schedule === "scheduled") reasons.push("not-scheduled");
   if (schedule === "expired") reasons.push("expired");
 
-  if (!campaignIsComplianceReady(campaign)) reasons.push("legal-incomplete");
+  if (!unregulated && !campaignIsComplianceReady(campaign)) reasons.push("legal-incomplete");
 
   if (context.nswSafetyMode && !context.parkedConfirmed) reasons.push("parked-confirmation-missing");
   if (context.nswSafetyMode && campaign.mediaType !== "image") reasons.push("media-not-static");
@@ -291,15 +304,37 @@ export function campaignBlockReasons(
   const src = campaignAssetSrc(campaign);
   if (!src || !isSafeAssetUrl(src)) reasons.push("asset-missing");
 
-  if (campaignReferralIssues(campaign).length > 0) reasons.push("referral-incomplete");
+  if (!unregulated && campaignReferralIssues(campaign).length > 0) reasons.push("referral-incomplete");
 
-  // Geographic rule: a missing fix blocks by default (fail closed).
-  const geo = geoDecision(campaign.geoRule, context.location);
-  if (geo === "outside" || (geo === "unknown" && (context.requireLocation ?? true))) {
-    reasons.push("outside-geo");
+  // Geographic rule: a missing fix blocks by default (fail closed). Geography
+  // is part of the legal pack, so an unregulated campaign ignores it.
+  if (!unregulated) {
+    const geo = geoDecision(campaign.geoRule, context.location);
+    if (geo === "outside" || (geo === "unknown" && (context.requireLocation ?? true))) {
+      reasons.push("outside-geo");
+    }
   }
 
   return [...new Set(reasons)];
+}
+
+/**
+ * True when a campaign runs outside the legal pack: either the pack is switched
+ * off right now, or the campaign was created while it was off. The second case
+ * is deliberate — an unregulated campaign keeps displaying after the pack goes
+ * back on (test content), and stays flagged so nothing pretends it is approved.
+ */
+export function campaignRunsUnregulated(
+  campaign: CommercialCampaign,
+  options: { legalPackEnabled?: boolean } = {},
+): boolean {
+  if (!(options.legalPackEnabled ?? true)) return true;
+  return campaign.complianceMode === "unregulated";
+}
+
+/** Legal pack state for a settings object, defaulting to on. */
+export function legalPackIsEnabled(settings: { legalPackEnabled?: boolean } | null | undefined): boolean {
+  return settings?.legalPackEnabled ?? true;
 }
 
 export function campaignIsEligible(campaign: CommercialCampaign, context: CampaignContext): boolean {

@@ -59,6 +59,7 @@ interface CampaignRow {
   payload: CommercialCampaign;
   updated_at: string;
   approval_state: string | null;
+  compliance_mode?: string | null;
 }
 
 export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof fetch = fetch): Backend {
@@ -105,6 +106,9 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
             id: campaign.id,
             title: campaign.title,
             approval_state: campaign.approval?.state ?? (campaign.approved ? "approved" : "draft"),
+            // Only sent for unregulated content: a project that has run 0001 but
+            // not 0002 keeps working, because the column is omitted entirely.
+            ...(campaign.complianceMode === "unregulated" ? { compliance_mode: "unregulated" } : {}),
             payload,
             updated_at: new Date(payload.updatedAt).toISOString(),
           },

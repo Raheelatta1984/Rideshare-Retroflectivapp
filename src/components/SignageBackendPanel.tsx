@@ -100,10 +100,21 @@ export function SignageBackendPanel({
       <div className="mt-4 rounded-2xl border border-line bg-panel p-4">
         <p className="text-[10px] tracking-[0.28em] text-amber">APPROVAL QUEUE{pending.length ? ` · ${pending.length} WAITING` : ""}</p>
         {pending.length === 0 && <p className="mt-2 text-xs text-mist">No campaigns awaiting review.</p>}
+        <p className="mt-1 text-[10px] leading-relaxed text-mist">
+          With the legal &amp; approval pack off, a seeded or newly added campaign is normally recorded as a draft and
+          stays exempt — review here is optional sign-off, not a gate.
+        </p>
         <div className="mt-3 space-y-2">
           {pending.map((campaign) => (
             <div key={campaign.id} className="rounded-xl border border-line bg-ink px-3 py-3">
-              <p className="truncate text-sm text-cream">{campaign.title}</p>
+              <p className="truncate text-sm text-cream">
+                {campaign.title}
+                {campaign.complianceMode === "unregulated" && (
+                  <span className="ml-2 rounded-full border border-amber/50 px-2 py-0.5 text-[9px] tracking-[0.14em] text-amber">
+                    UNREGULATED
+                  </span>
+                )}
+              </p>
               <p className="mt-0.5 text-[10px] text-mist">
                 {campaign.mediaType} · {campaign.displaySeconds}s · {approvalLabel(campaign)}
               </p>

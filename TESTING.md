@@ -128,6 +128,25 @@ Sign in as an admin, open the **Booth** tab (the Settings tab is labelled
 `src/lib/demo.test.ts` asserts all of that, including that the campaign has
 zero `campaignBlockReasons` under NSW safety mode on a rear screen.
 
+### The two switches (they are separate on purpose)
+
+| Switch | Covers | Default |
+| --- | --- | --- |
+| **NSW Safety Mode** | The road-safety rules of the glass: static media only, 10 s dwell floor (25 s at 80 km/h+), per-device parked confirmation, night brightness cap, no QR/referral overlay, black failure frame | on |
+| **Legal & approval pack (NSW / Australia)** | Consent records, agreements, trademark authorization, the written permission register, authorization PDFs, campaign approval, referral terms, geographic rules | on |
+
+Turn the pack off and the consent forms, the permission register and the
+authorization buttons all disappear; campaigns you add display straight away and
+are stamped `UNREGULATED`. They are marked on the glass with a **"TEST · NO LEGAL
+PACK"** badge and in the console list, and — as agreed — they **keep displaying
+when you switch the pack back on**, because they are test content, not approved
+content. The badge has its own toggle ("Show "no legal pack" marker on the glass")
+ready for client demos.
+
+The pack switch takes a confirmation click and writes an activity-log entry every
+time it changes. Compliance settings, not a legal opinion: the switch changes what
+the app enforces, not what the road rules or your permits require.
+
 ### Watching it on the glass
 
 Four separate switches decide whether the display is lit. A black screen is

@@ -11,6 +11,8 @@ import {
   campaignAssetSrc,
   isSafeAssetUrl,
   effectiveMediaType,
+  campaignRunsUnregulated,
+  legalPackIsEnabled,
   selectCampaigns,
   slideDurationSeconds,
 } from "../lib/signage";
@@ -162,10 +164,13 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
     (settings.commercialCampaigns ?? []).filter((campaign) => campaignIds.includes(campaign.id)),
     {
       nswSafetyMode: settings.nswSafetyMode ?? true,
+      legalPackEnabled: legalPackIsEnabled(settings),
       position,
       parkedConfirmed: deviceProfile?.commercialParkedConfirmed,
     },
   );
+  // Anything on this glass that is running outside the legal pack gets marked.
+  const unregulatedOnGlass = campaigns.some((campaign) => campaignRunsUnregulated(campaign, settings));
   const motionGps = useMotion(!preview && !!ride && powered && ["en_route", "stopped"].includes(ride.status), demoStopped, settings.stationarySpeedKph ?? 0.5);
   // The driver's phone is the movement authority. Tablet GPS is only a legacy fallback for ride demos.
   const motion: MotionState = remoteMotion ?? motionGps;
@@ -489,6 +494,13 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
         <div className="pointer-events-none absolute top-3 right-4 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-cream/75">
           {tabletBattery.charging ? <BatteryCharging className="h-4 w-4" /> : <Battery className="h-4 w-4" />}
           <span>{tabletBattery.percentage}%</span>
+        </div>
+      )}
+
+      {(settings.unregulatedBadge ?? true) && !sleeping && unregulatedOnGlass && (
+        <div className="pointer-events-none absolute top-3 right-3 z-10 rounded border border-amber/50 bg-black/65 px-2 py-1 text-[9px] leading-tight tracking-[0.18em] text-amber">
+          <p>TEST · NO LEGAL PACK</p>
+          <p className="text-white/60">consents + approval not enforced</p>
         </div>
       )}
 

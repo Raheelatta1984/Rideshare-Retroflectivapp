@@ -52,6 +52,27 @@ the approval queue and the event feed.
 Without those variables the app runs entirely on the local adapter — which is
 why nothing here can break your current deployment.
 
+## Legal & approval pack switch (migration 0002)
+
+The console has a master switch for the legal & approval pack, separate from NSW
+Safety Mode. Off means: no consent records, no agreements or trademark
+authorization, no written permission register, no authorization PDFs, no approval
+step, no referral terms, no geographic gating. Such campaigns are stamped
+`complianceMode: "unregulated"` and keep displaying after the pack is switched
+back on — they are test content, marked on the glass and in the console list.
+
+Two deliberate choices:
+
+- **The database guard is not relaxed.** An unregulated campaign is mirrored with
+  `approval_state = "draft"`, so the approval trigger never sees a fake approval.
+  No consents are required; nothing is falsely signed off.
+- **The column is only sent when it is needed.** `compliance_mode` is included in
+  the upsert only for unregulated campaigns, so a project that has run `0001` but
+  not yet `0002` keeps working for everything else.
+
+Run `supabase/migrations/0002_compliance_mode.sql` to add the column, the index
+and the comment, and to expose the flag for reporting.
+
 ## Security model
 
 - **The anon key is public.** Policies, not the key, protect the data.

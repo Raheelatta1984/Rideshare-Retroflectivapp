@@ -188,3 +188,27 @@ describe("commercial profile assignment", () => {
     expect(profiles[0].campaignIds).toEqual([]);
   });
 });
+
+describe("seed campaign under the legal pack switch", () => {
+  it("is stamped unregulated and titled as a test when the pack is off", () => {
+    const campaign = buildSeedCampaign(Date.now(), "unregulated");
+    expect(campaign.complianceMode).toBe("unregulated");
+    expect(campaign.title).toMatch(/unregulated/i);
+    // Still shows immediately even with the pack back on, and still shows if
+    // the safety mode demands a parked confirmation.
+    expect(
+      campaignBlockReasons(campaign, { nswSafetyMode: true, position: "rear", parkedConfirmed: true, legalPackEnabled: true })
+    ).toEqual([]);
+  });
+
+  it("defaults to a regulated campaign", () => {
+    expect(buildSeedCampaign().complianceMode).toBe("regulated");
+  });
+
+  it("keeps a regulated, unsigned campaign blocked while the pack is on", () => {
+    const regulated = { ...buildSeedCampaign(), legal: undefined, approved: false, approval: undefined };
+    expect(
+      campaignBlockReasons(regulated, { nswSafetyMode: true, position: "rear", parkedConfirmed: true, legalPackEnabled: true })
+    ).not.toEqual([]);
+  });
+});

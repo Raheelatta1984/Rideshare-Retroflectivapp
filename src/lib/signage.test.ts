@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildSeedCampaign } from "./demo";
 import {
   approvalLabel,
   campaignApprovalState,
@@ -24,6 +25,8 @@ import {
   NSW_MIN_DWELL_SECONDS,
   NSW_NIGHT_BRIGHTNESS_CAP,
   type CampaignContext,
+  campaignRunsUnregulated,
+  legalPackIsEnabled,
 } from "./signage";
 import { blankLegalFixture } from "../test/fixtures";
 import type { CommercialCampaign } from "../types";
@@ -406,5 +409,92 @@ describe("geographic rules", () => {
 
   it("leaves campaigns without a geo rule unaffected", () => {
     expect(campaignIsEligible(approvedCampaign({ geoRule: undefined }), { ...SAFE_CONTEXT, location: undefined })).toBe(true);
+  });
+});
+
+describe("legal & approval pack master switch", () => {
+  /** A campaign with no consents, no approval and a referral code — i.e. the worst case. */
+  const bare: CommercialCampaign = {
+    id: "cmp_bare",
+    title: "Bare campaign",
+    mediaType: "image",
+    assetDataUrl: "data:image/png;base64,AAAA",
+    displaySeconds: 12,
+    enabled: true,
+    approved: false,
+    discountText: "20% off",
+    referralCode: "RIDE20",
+  };
+
+  const rearNsw = {
+    nswSafetyMode: true,
+    position: "rear" as const,
+    parkedConfirmed: true,
+    now: Date.now(),
+  };
+
+  it("blocks an unsigned, unapproved campaign while the pack is on", () => {
+    const reasons = campaignBlockReasons(bare, { ...rearNsw, legalPackEnabled: true });
+    expect(reasons).toContain("legal-incomplete");
+    expect(reasons).toContain("not-approved");
+    expect(reasons).toContain("referral-incomplete");
+  });
+
+  it("defaults to the pack being ON when the caller says nothing", () => {
+    expect(campaignBlockReasons(bare, rearNsw)).toContain("not-approved");
+  });
+
+  it("lets it straight through when the pack is off", () => {
+    expect(campaignBlockReasons(bare, { ...rearNsw, legalPackEnabled: false })).toEqual([]);
+  });
+
+  it("ignores geographic rules while the pack is off", () => {
+    const geo = { latitude: -33.8688, longitude: 151.2093, radiusKm: 5 };
+    const signedRegulated: CommercialCampaign = {
+      ...bare,
+      approval: { state: "approved" },
+      approved: true,
+      referralCode: undefined,
+      discountText: undefined,
+      legal: buildSeedCampaign().legal,
+      geoRule: geo,
+    };
+    // No fix at all: fail-closed for a regulated campaign, irrelevant once the
+    // pack is off — or once the campaign is stamped unregulated.
+    expect(campaignBlockReasons(signedRegulated, { ...rearNsw, legalPackEnabled: true })).toContain("outside-geo");
+    expect(campaignBlockReasons(signedRegulated, { ...rearNsw, legalPackEnabled: false })).toEqual([]);
+    expect(
+      campaignBlockReasons({ ...signedRegulated, complianceMode: "unregulated" }, { ...rearNsw, legalPackEnabled: true })
+    ).toEqual([]);
+  });
+
+  it("keeps an unregulated campaign displaying after the pack is switched back on", () => {
+    const stamped: CommercialCampaign = { ...bare, complianceMode: "unregulated" };
+    expect(campaignBlockReasons(stamped, { ...rearNsw, legalPackEnabled: true })).toEqual([]);
+    expect(campaignRunsUnregulated(stamped, { legalPackEnabled: true })).toBe(true);
+  });
+
+  it("still enforces the safety rules separately", () => {
+    const stamped: CommercialCampaign = { ...bare, complianceMode: "unregulated" };
+    // NSW Safety Mode is a different switch and still applies to test content.
+    expect(campaignBlockReasons(stamped, { ...rearNsw, parkedConfirmed: false, legalPackEnabled: true })).toContain(
+      "parked-confirmation-missing"
+    );
+    expect(
+      campaignBlockReasons({ ...stamped, mediaType: "video" }, { ...rearNsw, legalPackEnabled: true })
+    ).toContain("media-not-static");
+  });
+
+  it("never exempts a regulated campaign just because the pack was off earlier", () => {
+    const regulated: CommercialCampaign = { ...bare, complianceMode: "regulated" };
+    expect(campaignRunsUnregulated(regulated, { legalPackEnabled: true })).toBe(false);
+    expect(campaignBlockReasons(regulated, { ...rearNsw, legalPackEnabled: true })).not.toEqual([]);
+  });
+
+  it("reads the pack state from settings with a safe default", () => {
+    expect(legalPackIsEnabled(undefined)).toBe(true);
+    expect(legalPackIsEnabled({})).toBe(true);
+    expect(legalPackIsEnabled({ legalPackEnabled: false })).toBe(false);
+    expect(campaignRunsUnregulated(bare, { legalPackEnabled: false })).toBe(true);
   });
 });

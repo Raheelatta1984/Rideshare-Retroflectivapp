@@ -124,6 +124,19 @@ export interface DisplaySettings {
   language?: "en" | "es" | "fr" | "de" | "pt" | "zh" | "ja" | "ko" | "ar" | "hi";
   deviceProfiles?: DeviceProfile[];
   commercialCampaigns?: CommercialCampaign[];
+  /**
+   * Master switch for the legal & approval pack: consent records, agreements,
+   * trademark authorization, the written permission register, campaign approval
+   * and geographic gating. Separate from nswSafetyMode, which governs the
+   * road-safety rules of the display itself (static media, dwell floor, parked
+   * confirmation, night brightness cap).
+   *
+   * When off, campaigns display without any of that paperwork and are stamped
+   * `complianceMode: "unregulated"`. Defaults to true (pack on).
+   */
+  legalPackEnabled?: boolean;
+  /** Show the "no legal pack" marker on the glass while running unregulated. */
+  unregulatedBadge?: boolean;
   includeCommercial?: boolean;
   /** Sleep pin-light shown on the rear glass while idle. */
   sleepIndicator?: boolean;
@@ -281,6 +294,13 @@ export interface CommercialCampaign {
   title: string;
   enabled: boolean;
   approved: boolean;
+  /**
+   * Which compliance regime this campaign was created under. An "unregulated"
+   * campaign is exempt from consent, approval, referral and geography checks
+   * even after the legal pack is switched back on: it is test content, it stays
+   * flagged, and the display marks it.
+   */
+  complianceMode?: "regulated" | "unregulated";
   /** Cached pilot asset (data URL). Optional when an approved assetUrl is set. */
   assetDataUrl?: string;
   /** Approved remote asset — signed URL in the Phase 2 backend. */
