@@ -11,8 +11,6 @@ import { buildZipBuffer, ZIP_NAME } from "./scripts/build-zip.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Emits Rideshare-Retroflectivapp.zip into dist so the deployed site
-// serves a real downloadable URL at /Rideshare-Retroflectivapp.zip
 function zipPlugin(): Plugin {
   return {
     name: "repo-zip-emit",
@@ -23,7 +21,7 @@ function zipPlugin(): Plugin {
         const outDir = path.resolve(__dirname, "dist");
         await fs.mkdir(outDir, { recursive: true });
         await fs.writeFile(path.join(outDir, ZIP_NAME), buffer);
-        // also keep a copy under public during dev so the path is consistent
+
         const publicDir = path.resolve(__dirname, "public");
         await fs.mkdir(publicDir, { recursive: true });
         await fs.writeFile(path.join(publicDir, ZIP_NAME), buffer);
@@ -34,12 +32,23 @@ function zipPlugin(): Plugin {
   };
 }
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss(), viteSingleFile(), zipPlugin()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+    },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "json-summary"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.d.ts", "src/test/**"],
     },
   },
 });
