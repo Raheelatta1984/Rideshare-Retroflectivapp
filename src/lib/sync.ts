@@ -66,7 +66,7 @@ export function usePairChannel(
     if (state.errorLog.length > MAX_ERRORS_LOG) {
       state.errorLog = state.errorLog.slice(-MAX_ERRORS_LOG);
     }
-    console.error(`[Retroflex ${pairCode}/${role}]`, err);
+    console.error(`[Retroflex \( {pairCode}/ \){role}]`, err);
   }, [pairCode, role]);
 
   const publishPacket = useCallback(
@@ -75,7 +75,7 @@ export function usePairChannel(
       const state = stateRef.current;
 
       // Add packet ID for acknowledgment tracking
-      const packetId = `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      const packetId = `pkt_\( {Date.now()}_ \){Math.random().toString(36).slice(2, 10)}`;
       const packetWithId = { ...packet, packetId };
 
       // Try BroadcastChannel first (same browser)
@@ -188,7 +188,7 @@ export function usePairChannel(
         }
 
         // Create new peer with enterprise configuration
-        const peerId = `${role}-${pairCode}-${Math.random().toString(36).slice(2, 10)}`;
+        const peerId = `\( {role}- \){pairCode}-${Math.random().toString(36).slice(2, 10)}`;
         const peer = new Peer(peerId, {
           host: new URL(RELAY_SERVER).hostname,
           port: parseInt(new URL(RELAY_SERVER).port || "443"),
@@ -248,7 +248,7 @@ export function usePairChannel(
 
           // Try to connect to matching peer
           const targetRole = role === "host" ? "display" : "host";
-          const targetPeerId = `${targetRole}-${pairCode}-*`;
+          const targetPeerId = `\( {targetRole}- \){pairCode}-*`;
 
           // Heartbeat to announce presence
           heartbeatInterval = window.setInterval(() => {
@@ -347,5 +347,137 @@ export function usePairChannel(
       peerId: stateRef.current.peerId,
       lastHeartbeat: stateRef.current.lastHeartbeat,
     },
+  };
+}
+
+/**
+ * Multi-pair fleet channel manager used by DriverConsole.
+ * Opens a host channel for each pair code and exposes publish helpers.
+ */
+export function useFleetChannels(
+  pairCodes: string[],
+  onMessage?: (packet: SyncPacket, pairCode: string) => void
+) {
+  const channelsRef = useRef<Map<string, BroadcastChannel>>(new Map());
+  const [connectedCodes, setConnectedCodes] = useState<string[]>([]);
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
+
+  const pairKey = pairCodes.filter(Boolean).sort().join("|");
+
+  useEffect(() => {
+    const codes = pairCodes.filter(Boolean);
+    const nextMap = new Map<string, BroadcastChannel>();
+    const connected: string[] = [];
+
+    for (const code of codes) {
+      try {
+        const existing = channelsRef.current.get(code);
+        if (existing) {
+          nextMap.set(code, existing);
+          connected.push(code);
+          continue;
+        }
+
+        const channelName = `retroflex-${code}`;
+        const bc = new BroadcastChannel(channelName);
+
+        const handleMessage = (event: MessageEvent<SyncPacket>) => {
+          const packet = event.data;
+          if (packet?.packetId) {
+            try {
+              bc.postMessage({ type: "ack", acknowledges: packet.packetId });
+            } catch {
+              // ignore
+            }
+          }
+          onMessageRef.current?.(packet, code);
+        };
+
+        bc.addEventListener("message", handleMessage);
+        (bc as any).__handler = handleMessage;
+        nextMap.set(code, bc);
+        connected.push(code);
+      } catch (err) {
+        console.error(`[Retroflex fleet] Failed to open channel for ${code}`, err);
+      }
+    }
+
+    // Close channels that are no longer needed
+    for (const [code, bc] of channelsRef.current) {
+      if (!nextMap.has(code)) {
+        try {
+          const handler = (bc as any).__handler;
+          if (handler) bc.removeEventListener("message", handler);
+          bc.close();
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    channelsRef.current = nextMap;
+    setConnectedCodes(connected);
+  }, [pairKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      for (const [, bc] of channelsRef.current) {
+        try {
+          const handler = (bc as any).__handler;
+          if (handler) bc.removeEventListener("message", handler);
+          bc.close();
+        } catch {
+          // ignore
+        }
+      }
+      channelsRef.current.clear();
+    };
+  }, []);
+
+  const publishTo = useCallback((pairCode: string, packet: SyncPacket) => {
+    const bc = channelsRef.current.get(pairCode);
+    if (!bc) return;
+
+    const packetId = `pkt_\( {Date.now()}_ \){Math.random().toString(36).slice(2, 10)}`;
+    const packetWithId = { ...packet, packetId };
+
+    try {
+      bc.postMessage(packetWithId);
+    } catch (err) {
+      console.error(`[Retroflex fleet] publishTo ${pairCode} failed`, err);
+    }
+
+    // Optional cloud relay
+    try {
+      fetch(`${RELAY_SERVER}/relay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pairCode,
+          fromRole: "host",
+          packet: packetWithId,
+          timestamp: Date.now(),
+        }),
+      }).catch(() => undefined);
+    } catch {
+      // optional
+    }
+  }, []);
+
+  const publishAll = useCallback(
+    (builder: (pairCode: string) => SyncPacket) => {
+      for (const code of channelsRef.current.keys()) {
+        publishTo(code, builder(code));
+      }
+    },
+    [publishTo]
+  );
+
+  return {
+    publishTo,
+    publishAll,
+    connectedCodes,
   };
 }
