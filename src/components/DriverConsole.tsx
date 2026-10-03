@@ -19,9 +19,10 @@ import { kph, useMotion } from "../lib/motion";
 import { Check } from "lucide-react";
 import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DeviceProfile, DeviceTelemetry, DisplaySettings, DriverRole, LegalConsent, TabletBattery, TabletDevice } from "../types";
 import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice } from "../lib/devices";
-import { canDownloadSource, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
+import { canDownloadSource, isCommercialOperator, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
 import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
 import { campaignDraftIssues, campaignScheduleLabel } from "../lib/signage";
+import { buildSeedCampaign, enableCommercialOnProfile, SEED_CAMPAIGN_ID } from "../lib/demo";
 import { getBackend } from "../lib/backend";
 import { SignageBackendPanel } from "./SignageBackendPanel";
 import { Logo } from "./Logo";
@@ -382,7 +383,7 @@ function LiveTab({
   role: DriverRole;
 }) {
   const { driver, saveSettings } = useStore();
-  const allowCommercial = isSourceOwner(driver?.email);
+  const allowCommercial = isCommercialOperator(driver?.email);
   const rearPrimary = profiles.find((profile) => profile.pairCode === driver?.pairCode && profile.position === "rear" && !profile.deviceId) ?? (driver ? createDeviceProfile({ pairCode: driver.pairCode, position: "rear", apps: driver.platforms }) : null);
   const frontPrimary = profiles.find((profile) => profile.pairCode === driver?.frontPairCode && profile.position === "front" && !profile.deviceId) ?? (driver?.frontPairCode ? createDeviceProfile({ pairCode: driver.frontPairCode, position: "front", apps: driver.platforms, label: `Front pair ${driver.frontPairCode}` }) : null);
   // Keep profiles after a tablet disconnects so the next connection restores its last local setup.
@@ -1011,6 +1012,7 @@ const QA_PHASES: Array<{ id: QaPhaseId; label: string; detail: string; weight: n
 ];
 
 function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: DisplaySettings; saveSettings: (patch: Partial<DisplaySettings>) => void; recordActivity: (entry: Omit<import("../types").ActivityLog, "id" | "at" | "actorId">) => void }) {
+  const { driver } = useStore();
   const [title, setTitle] = useState("");
   const [assetDataUrl, setAssetDataUrl] = useState("");
   const [mediaType, setMediaType] = useState<CommercialCampaign["mediaType"]>("image");
@@ -1035,6 +1037,38 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
   const qaLoggedCheckpoints = useRef<Set<number>>(new Set());
   const nswSafety = settings.nswSafetyMode ?? true;
   const campaigns = settings.commercialCampaigns ?? [];
+  const [seedNote, setSeedNote] = useState<string | null>(null);
+
+  /**
+   * One-click test setup: a pre-approved demo campaign plus a commercial rear
+   * profile for this driver's pair code, so a display shows content straight
+   * away. Writes both fields in a single saveSettings patch (the store merges
+   * a patch into the settings it already has).
+   */
+  const seedDemoCampaign = () => {
+    const campaign = buildSeedCampaign();
+    const nextCampaigns = [...campaigns.filter((item) => item.id !== campaign.id), campaign];
+    const profiles = driver
+      ? enableCommercialOnProfile(settings.deviceProfiles ?? [], {
+          pairCode: driver.pairCode,
+          campaignId: campaign.id,
+          apps: driver.platforms,
+        })
+      : settings.deviceProfiles ?? [];
+    saveSettings({ commercialCampaigns: nextCampaigns, deviceProfiles: profiles });
+    // Mirror it as already approved so the playlist and the backend agree.
+    void getBackend().campaigns.upsert(campaign).catch(() => undefined);
+    recordActivity({
+      action: "Commercial campaign seeded",
+      details: { campaign: campaign.title, pairCode: driver?.pairCode ?? "none", campaignId: campaign.id },
+    });
+    const stationaryWait = settings.stationaryWaitSeconds ?? 60;
+    setSeedNote(
+      driver
+        ? `Seeded “${campaign.title}”: six consents signed, approval granted, rear profile for ${driver.pairCode} switched to a commercial playlist. Two more switches decide whether the glass is black or lit — the display must be ON (Live tab power switch) and the app must treat the car as parked (motion gate; ${stationaryWait}s stationary wait, default 60). Open ?mode=tablet&display=${driver.pairCode} on the tablet, or #/display/${driver.pairCode} in a second tab. For a parked desk test, turn off “Display only while stopped” in this tab — otherwise the glass intentionally stays black until the app believes the car is parked for ${stationaryWait}s.`
+        : "Seeded the demo campaign. Sign in as a driver with a pair code to assign it to a display."
+    );
+  };
   const [legal, setLegal] = useState<CommercialCampaignLegal>(() => blankCampaignLegal());
 
   const updateConsent = (key: keyof Pick<CommercialCampaignLegal, "appOwner" | "driver" | "vehicleOwner" | "campaignOwner" | "trademarkAuthorization" | "safetyAssessment">, patch: Partial<LegalConsent>) => {
@@ -1266,6 +1300,30 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
         <div className="mt-3"><Toggle label="Remote diagnostics overlay" on={settings.diagnosticsOverlay ?? false} onChange={(diagnosticsOverlay) => saveSettings({ diagnosticsOverlay })} /></div>
         <p className="mt-3 leading-relaxed">When enabled: static images only, at least 10 seconds per campaign, no animated/video media, no QR/referral overlay, and black is the failure/blank frame. Confirm permits, vehicle requirements, approval, placement and road-safety compliance with NSW authorities before any public deployment. This app does not grant legal approval.</p>
         <p className="mt-2 text-xs">Diagnostics overlay displays small white device telemetry at upper left for owner QA. Turn it off for any passenger/public-facing deployment.</p>
+      </div>
+
+      <div className="mt-5 rounded-3xl border border-cream/20 bg-cream/5 p-4">
+        <p className="text-[11px] tracking-[0.3em] text-amber">TESTING SHORTCUT</p>
+        <p className="mt-2 text-sm leading-relaxed text-mist">
+          Generates a static demo spot with all six consents signed and approval granted, then switches the rear profile
+          for pair code <span className="text-cream">{driver?.pairCode ?? "—"}</span> onto a commercial playlist. It skips
+          the asset upload and the consent signing so you can watch the glass instead of the forms.
+        </p>
+        <button onClick={seedDemoCampaign} className="mt-3 w-full rounded-2xl bg-amber py-3 font-semibold text-ink">
+          Seed demo campaign for this device
+        </button>
+        {seedNote && <p className="mt-3 text-xs leading-relaxed text-cream">{seedNote}</p>}
+        {campaigns.some((item) => item.id === SEED_CAMPAIGN_ID) && (
+          <button
+            onClick={() => {
+              saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== SEED_CAMPAIGN_ID) });
+              setSeedNote("Demo campaign removed.");
+            }}
+            className="mt-2 w-full rounded-2xl border border-line py-2 text-xs text-mist hover:text-cream"
+          >
+            Remove the seeded demo campaign
+          </button>
+        )}
       </div>
 
       <div className="mt-6 rounded-3xl border border-line bg-panel p-4">

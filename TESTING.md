@@ -95,3 +95,55 @@ server). Ticks are what a passing run looks like.
 - Component/boot tests live in `src/**/*.test.tsx`; jsdom and jest-dom matchers are pre-configured in `src/test/setup.ts`.
 - PeerJS is mocked in `src/lib/sync.test.ts` with a fake `Peer` class — copy that pattern for anything touching the sync layer.
 - Shared fixtures go in `src/test/fixtures.ts`.
+
+## Testing the commercial signage
+
+### Accounts
+
+| Account | Password | Role | What it unlocks |
+| --- | --- | --- | --- |
+| `tic.raheel@gmail.com` | `Abc@123` | admin | Commercial signage and QA, the Phase 2 backend panel, campaign assignment. **Seeded on first boot** — no signup needed. |
+| `raheel@retroflex.app` | *set via signup or password reset* | admin + source owner | Everything above, plus the Source Vault. |
+| `demo@retroflex.app` | `demo1234` | demo | Driver-facing console and tablet only. **The commercial sections stay hidden.** |
+| any new signup | — | driver | Sees the driver console; no signage tools. |
+
+Admin accounts are seeded by `seedDefaultAdmins()` in `src/lib/demo.ts` from
+`DEFAULT_ADMIN_ACCOUNTS` in `src/lib/access.ts`. An existing record is never
+overwritten, so a changed password survives. Set `VITE_SEED_DEFAULT_ADMINS=off`
+to ship a build with no administrator login at all — these are client-side
+credentials that gate the admin UI, not a server boundary.
+
+### One-click test setup
+
+Sign in as an admin, open the **Booth** tab (the Settings tab is labelled
+*Booth*), and press **"Seed demo campaign for this device"** in the
+*Commercial signage and QA* section. That single button:
+
+1. builds a static demo spot (SVG data URL — NSW Safety Mode only accepts images),
+2. signs all six consent records and marks the campaign approved,
+3. switches the **rear** profile for your pair code onto a commercial playlist
+   with the parked confirmation set, and assigns the campaign to it,
+4. mirrors it to the backend as approved.
+
+`src/lib/demo.test.ts` asserts all of that, including that the campaign has
+zero `campaignBlockReasons` under NSW safety mode on a rear screen.
+
+### Watching it on the glass
+
+Four separate switches decide whether the display is lit. A black screen is
+usually one of these, not a broken campaign:
+
+| Switch | Default | Where |
+| --- | --- | --- |
+| Console power | **off** | Live tab power switch |
+| Device profile `powered` | on | Live tab device profile |
+| Motion gate ("Display only while stopped") | on, 60 s stationary wait | Booth tab |
+| Campaign assigned to *that* profile | — | Live tab → campaign chips |
+
+Open the display at `?mode=tablet&display=PAIRCODE` (rear pair code from the
+console) or `#/display/PAIRCODE` in a second tab. For a desk test, switch off
+"Display only while stopped" — otherwise the glass stays black by design until
+the app believes the car is parked.
+
+To watch the approval workflow instead, create a campaign through the normal
+form (it mirrors as *pending*) and approve it in the *Commercial backend* panel.

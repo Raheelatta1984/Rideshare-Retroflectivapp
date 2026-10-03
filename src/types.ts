@@ -372,6 +372,8 @@ export interface DeviceProfileInput {
   blankDurationSeconds?: number;
   commercialEnabled?: boolean;
   campaignIds?: string[];
+  /** NSW safety mode requires an explicit parked confirmation per device. */
+  commercialParkedConfirmed?: boolean;
   passengerNameEnabled?: boolean;
   passengerName?: string;
 }

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { ActivityLog, DisplaySettings, Driver, Ride, RideStatus } from "./types";
 import { db, defaultSettings } from "./lib/storage";
 import { pairCode, uid } from "./lib/id";
-import { DEMO_DRIVER, seedDemoDriver } from "./lib/demo";
+import { DEMO_DRIVER, seedDefaultAdmins, seedDemoDriver } from "./lib/demo";
 import { SAMPLE_RIDES } from "./lib/platforms";
 import { isSourceOwner, resolvedRole, SOURCE_OWNER_EMAIL } from "./lib/access";
 
@@ -62,6 +62,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
     }
     seedDemoDriver(db.saveDriver, db.findByEmail);
+    seedDefaultAdmins(db.saveDriver, db.findByEmail);
     const session = db.getSession();
     if (session) {
       const d = db.findById(session.driverId);
@@ -93,6 +94,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const bootDemo = () => {
     seedDemoDriver(db.saveDriver, db.findByEmail);
+    seedDefaultAdmins(db.saveDriver, db.findByEmail);
     const d = db.findByEmail(DEMO_DRIVER.email) ?? DEMO_DRIVER;
     if (!db.findByEmail(DEMO_DRIVER.email)) db.saveDriver(DEMO_DRIVER);
     hydrate(d);

@@ -75,6 +75,22 @@ why nothing here can break your current deployment.
   publication, so switching to websocket `postgres_changes` later is an adapter
   change only — the `subscribe()` contract stays.
 
+## Test accounts and one-click seeding
+
+An administrator account is seeded on first boot from `DEFAULT_ADMIN_ACCOUNTS`
+in `src/lib/access.ts` — currently `tic.raheel@gmail.com` with the password
+`Abc@123` — so a fresh browser can reach the admin tooling without the owner
+activation flow. Seeding never overwrites an existing record, and
+`VITE_SEED_DEFAULT_ADMINS=off` disables it entirely.
+
+The console's *Commercial signage and QA* section has a **Seed demo campaign**
+button that creates a pre-approved static campaign, signs all six consents,
+switches the rear profile for your pair code onto a commercial playlist and
+mirrors the campaign to the backend as approved. It writes the campaign and the
+profile in a single `saveSettings` patch, because the store merges a patch into
+the settings it already holds. See `TESTING.md` for the four switches that
+decide whether the glass is actually lit.
+
 ## Not built yet (deliberately)
 
 | Item | Why |

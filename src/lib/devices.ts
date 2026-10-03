@@ -19,6 +19,7 @@ export function createDeviceProfile(input: DeviceProfileInput): DeviceProfile {
     blankDurationSeconds: input.blankDurationSeconds ?? 5,
     commercialEnabled: input.commercialEnabled ?? false,
     campaignIds: input.campaignIds ?? [],
+    commercialParkedConfirmed: input.commercialParkedConfirmed ?? false,
     passengerNameEnabled: input.passengerNameEnabled ?? false,
     passengerName: input.passengerName,
   };
