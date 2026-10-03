@@ -114,9 +114,10 @@ export const db = {
   },
 
   addActivity: (entry: ActivityLog) => {
-    const list = db.listActivity(entry.driverId);
+    const driverId = entry.driverId ?? "shared";
+    const list = db.listActivity(driverId);
     const next = [entry, ...list].slice(0, 200);
-    localStorage.setItem(`rf:activity:${entry.driverId}`, JSON.stringify(next));
+    localStorage.setItem(`rf:activity:${driverId}`, JSON.stringify(next));
   },
 
   listActivity: (driverId: string): ActivityLog[] => {
@@ -215,9 +216,13 @@ export const db = {
     localStorage.setItem(key, JSON.stringify(next));
   },
 
-  listTabletActivity: (pairCode: string) => {
+  /**
+   * Local display events for a pair code. Pass a deviceId to narrow the log to
+   * one physical tablet (the tablet log screen shows "Device xxxx").
+   */
+  listTabletActivity: (pairCode: string, deviceId?: string) => {
     const key = `rf:tablet-activity:${pairCode}`;
-    return safeJsonParse<
+    const all = safeJsonParse<
       Array<{
         id: string;
         at: number;
@@ -227,5 +232,8 @@ export const db = {
         details?: Record<string, unknown>;
       }>
     >(localStorage.getItem(key), []);
+
+    if (!deviceId) return all;
+    return all.filter((entry) => entry.deviceId === deviceId);
   },
 };

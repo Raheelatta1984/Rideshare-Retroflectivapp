@@ -1,5 +1,7 @@
 // Access control for source vault and demo features
 
+import type { DriverRole } from "../types";
+
 export const SOURCE_OWNER_EMAIL = "raheel@retroflex.app";
 
 export function isSourceOwner(email: string | undefined): boolean {
@@ -17,11 +19,10 @@ export function isDemoAdmin(email: string | undefined): boolean {
   return isSourceOwner(email) || email.toLowerCase() === "demo@retroflex.app";
 }
 
-export function resolvedRole(email: string | undefined, currentRole: string | undefined) {
-  if (!email) return currentRole ?? "driver";
+export function resolvedRole(email: string | undefined, currentRole: string | undefined): DriverRole {
   if (isSourceOwner(email)) return "admin";
   if (isDemoAdmin(email)) return "demo";
-  return currentRole ?? "driver";
+  return (currentRole as DriverRole | undefined) ?? "driver";
 }
 
 export function canAccessFeature(

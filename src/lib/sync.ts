@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Peer from "peerjs";
+import Peer, { type DataConnection } from "peerjs";
+import { packetId as makePacketId, peerId as makePeerId, relayTag } from "./id";
 
 export interface SyncPacket {
   type: "hello" | "settings" | "ride" | "motion" | "battery" | "activity" | "telemetry" | "ack";
@@ -19,17 +20,83 @@ interface ConnectionState {
   broadcastChannel: BroadcastChannel | null;
   peer: Peer | null;
   peerId: string | null;
-  connectedPeers: Map<string, Peer.DataConnection>;
+  connectedPeers: Map<string, DataConnection>;
   lastHeartbeat: number;
   isConnected: boolean;
   errorLog: Array<{ at: number; error: string }>;
 }
 
-const connectionStates = new Map<string, ConnectionState>();
 const HEARTBEAT_INTERVAL = 8000;
-const PACKET_TIMEOUT = 5000;
 const MAX_ERRORS_LOG = 100;
-const RELAY_SERVER = process.env.REACT_APP_RELAY_SERVER || "https://relay.retroflex.app";
+/** How often a host retries dialling the tablet while unconnected. */
+const DIAL_RETRY_MS = 4000;
+/** How long to wait for a tablet to claim its peer id after a peer-unavailable. */
+const PEER_UNAVAILABLE_RETRY_MS = 1500;
+
+/**
+ * Optional self-hosted relay + PeerJS host.
+ *
+ * Set VITE_RELAY_SERVER at build time (Vercel → Project → Settings → Environment
+ * Variables) to enable the HTTP relay AND use your own PeerJS server. When it is
+ * unset the app signals over the public PeerJS cloud and never attempts relay
+ * traffic.
+ *
+ * History: this constant used to read `process.env.REACT_APP_RELAY_SERVER`,
+ * which is a Create-React-App convention — Vite only exposes `import.meta.env`.
+ * The value was therefore never configurable, and the hard-coded fallback
+ * `relay.retroflex.app` does not resolve in DNS, so every relay request and the
+ * TURN credential pair below were dead weight. The hard-coded TURN password
+ * (retroflex / beacon2024) has been removed; pass your own via env if needed.
+ */
+const RELAY_SERVER = (import.meta.env.VITE_RELAY_SERVER as string | undefined) ?? "";
+
+function relayHostname(value: string): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function relayPort(value: string, fallback: number): number {
+  if (!value) return fallback;
+  try {
+    return Number(new URL(value).port) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const PEER_HOST =
+  (import.meta.env.VITE_PEER_HOST as string | undefined) || relayHostname(RELAY_SERVER) || "0.peerjs.com";
+const PEER_PORT = Number(import.meta.env.VITE_PEER_PORT) || relayPort(RELAY_SERVER, 443);
+const PEER_PATH = (import.meta.env.VITE_PEER_PATH as string | undefined) || "/";
+const PEER_SECURE = PEER_PORT === 443 || RELAY_SERVER.startsWith("https");
+
+const TURN_URL = import.meta.env.VITE_TURN_URL as string | undefined;
+
+const PEER_OPTIONS = {
+  host: PEER_HOST,
+  port: PEER_PORT,
+  path: PEER_PATH,
+  secure: PEER_SECURE,
+  config: {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      ...(TURN_URL
+        ? [
+            {
+              urls: TURN_URL,
+              username: import.meta.env.VITE_TURN_USERNAME as string | undefined,
+              credential: import.meta.env.VITE_TURN_CREDENTIAL as string | undefined,
+            },
+          ]
+        : []),
+    ],
+  },
+};
 
 /**
  * Enterprise-grade sync layer for Retroflex devices
@@ -56,17 +123,13 @@ export function usePairChannel(
     errorLog: [],
   });
 
-  const pendingAcksRef = useRef<Map<string, { resolve: () => void; reject: (err: Error) => void; timeout: number }>>(
-    new Map()
-  );
-
   const logError = useCallback((err: string) => {
     const state = stateRef.current;
     state.errorLog.push({ at: Date.now(), error: err });
     if (state.errorLog.length > MAX_ERRORS_LOG) {
       state.errorLog = state.errorLog.slice(-MAX_ERRORS_LOG);
     }
-    console.error(`[Retroflex \( {pairCode}/ \){role}]`, err);
+    console.error(relayTag(pairCode, role), err);
   }, [pairCode, role]);
 
   const publishPacket = useCallback(
@@ -75,8 +138,8 @@ export function usePairChannel(
       const state = stateRef.current;
 
       // Add packet ID for acknowledgment tracking
-      const packetId = `pkt_\( {Date.now()}_ \){Math.random().toString(36).slice(2, 10)}`;
-      const packetWithId = { ...packet, packetId };
+      const nextPacketId = makePacketId();
+      const packetWithId = { ...packet, packetId: nextPacketId };
 
       // Try BroadcastChannel first (same browser)
       if (state.broadcastChannel) {
@@ -103,8 +166,8 @@ export function usePairChannel(
         }
       }
 
-      // Try Cloud Relay if available
-      if (state.peerId && state.isConnected) {
+      // Try Cloud Relay if one is configured (VITE_RELAY_SERVER)
+      if (RELAY_SERVER && state.peerId && state.isConnected) {
         try {
           fetch(`${RELAY_SERVER}/relay`, {
             method: "POST",
@@ -175,6 +238,9 @@ export function usePairChannel(
     let isActive = true;
     let reconnectTimeout: number | null = null;
     let heartbeatInterval: number | null = null;
+    let dialTimer: number | null = null;
+    let idCollision = false;
+    let dial: (() => void) | null = null;
     let reconnectDelay = 1000;
 
     const initPeer = async () => {
@@ -187,38 +253,29 @@ export function usePairChannel(
           state.connectedPeers.clear();
         }
 
-        // Create new peer with enterprise configuration
-        const peerId = `\( {role}- \){pairCode}-${Math.random().toString(36).slice(2, 10)}`;
-        const peer = new Peer(peerId, {
-          host: new URL(RELAY_SERVER).hostname,
-          port: parseInt(new URL(RELAY_SERVER).port || "443"),
-          path: "/peerjs",
-          secure: RELAY_SERVER.startsWith("https"),
-          config: {
-            iceServers: [
-              { urls: "stun:stun.l.google.com:19302" },
-              { urls: "stun:stun1.l.google.com:19302" },
-              { urls: "turn:relay.retroflex.app:3478", username: "retroflex", credential: "beacon2024" },
-            ],
-          },
-        });
+        // Deterministic, dialable peer identity: retroflex-<CODE>-<role>.
+        // The other side has to be able to find us without peer discovery,
+        // so the id is derived from the pair code instead of random.
+        const basePeerId = makePeerId(role, pairCode);
+        const peerId = idCollision ? `${basePeerId}-${Math.random().toString(36).slice(2, 6)}` : basePeerId;
+        const peer = new Peer(peerId, PEER_OPTIONS);
 
         state.peer = peer;
         state.peerId = peerId;
 
-        // Handle incoming connections
-        peer.on("connection", (connection) => {
-          if (!isActive) return;
-
+        // One wiring path for both incoming and outgoing connections.
+        const wireConnection = (connection: DataConnection) => {
           connection.on("open", () => {
             state.connectedPeers.set(connection.peer, connection);
             setConnected(true);
             setError(null);
             reconnectDelay = 1000; // Reset backoff
+            console.log(`[Retroflex] Peer connected: ${connection.peer}`);
           });
 
-          connection.on("data", (packet: SyncPacket) => {
-            if (packet.packetId) {
+          connection.on("data", (data: unknown) => {
+            const packet = data as SyncPacket;
+            if (packet?.packetId) {
               // Send acknowledgment
               try {
                 connection.send({ type: "ack", acknowledges: packet.packetId });
@@ -240,15 +297,36 @@ export function usePairChannel(
             logError(`PeerJS connection error: ${err.message}`);
             state.connectedPeers.delete(connection.peer);
           });
+        };
+
+        // Handle incoming connections (the tablet is dialled, so this is its
+        // side of the pair; the phone also accepts if the tablet dials back).
+        peer.on("connection", (connection) => {
+          if (!isActive) return;
+          wireConnection(connection);
         });
 
         peer.on("open", (id) => {
           if (!isActive) return;
           console.log(`[Retroflex] Peer opened: ${id}`);
 
-          // Try to connect to matching peer
-          const targetRole = role === "host" ? "display" : "host";
-          const targetPeerId = `\( {targetRole}- \){pairCode}-*`;
+          // Dial the other half of the pair. PeerJS exposes no peer discovery,
+          // so the target id must be known up-front — this is the connection
+          // the previous build constructed a wildcard for and never opened.
+          const targetRole: "host" | "display" = role === "host" ? "display" : "host";
+          const targetPeerId = makePeerId(targetRole, pairCode);
+
+          dial = () => {
+            if (!isActive || state.connectedPeers.size > 0) return;
+            try {
+              wireConnection(peer.connect(targetPeerId, { reliable: true }));
+            } catch (err) {
+              logError(`Dial ${targetPeerId} failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          };
+
+          dial();
+          dialTimer = window.setInterval(() => dial?.(), DIAL_RETRY_MS);
 
           // Heartbeat to announce presence
           heartbeatInterval = window.setInterval(() => {
@@ -267,8 +345,30 @@ export function usePairChannel(
         });
 
         peer.on("error", (err) => {
+          const type = (err as { type?: string }).type;
+
+          // Expected while the other device is still booting / offline:
+          // keep the channel alive and simply dial again shortly.
+          if (type === "peer-unavailable") {
+            reconnectTimeout = window.setTimeout(() => {
+              if (isActive) dial?.();
+            }, PEER_UNAVAILABLE_RETRY_MS);
+            return;
+          }
+
           logError(`PeerJS error: ${err.message}`);
           setError(err.message);
+
+          // Our deterministic id is already claimed (another tab or device
+          // with the same pair code). Fall back to a suffixed id rather than
+          // dropping the channel.
+          if (type === "unavailable-id" && !idCollision) {
+            idCollision = true;
+            reconnectTimeout = window.setTimeout(() => {
+              if (isActive) void initPeer();
+            }, 500);
+            return;
+          }
 
           // Exponential backoff reconnection
           if (isActive && reconnectDelay < 30000) {
@@ -293,6 +393,7 @@ export function usePairChannel(
       isActive = false;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (dialTimer) clearInterval(dialTimer);
       const state = stateRef.current;
       if (state.peer) {
         state.peer.destroy();
@@ -301,9 +402,9 @@ export function usePairChannel(
     };
   }, [pairCode, role, publishPacket, onMessage, logError]);
 
-  // Fetch updates from cloud relay periodically
+  // Fetch updates from cloud relay periodically (only when one is configured)
   useEffect(() => {
-    if (!pairCode) return;
+    if (!pairCode || !RELAY_SERVER) return;
 
     const pollRelay = async () => {
       try {
@@ -388,14 +489,17 @@ export function useFleetChannels(
       let reconnectTimeout: number | null = null;
       let reconnectDelay = 1000;
       let isActive = true;
+      let dialTimer: number | null = null;
+      let idCollision = false;
+      let dial: (() => void) | null = null;
 
       const logError = (err: string) => {
         console.error(`[Retroflex fleet/${code}]`, err);
       };
 
       const publishPacket = (packet: SyncPacket) => {
-        const packetId = `pkt_\( {Date.now()}_ \){Math.random().toString(36).slice(2, 10)}`;
-        const packetWithId = { ...packet, packetId };
+        const nextPacketId = makePacketId();
+        const packetWithId = { ...packet, packetId: nextPacketId };
 
         // BroadcastChannel (same browser / same origin tabs)
         if (bc) {
@@ -420,8 +524,8 @@ export function useFleetChannels(
           }
         }
 
-        // Cloud relay fallback
-        try {
+        // Cloud relay fallback (only when VITE_RELAY_SERVER is configured)
+        if (RELAY_SERVER) try {
           fetch(`${RELAY_SERVER}/relay`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -467,28 +571,14 @@ export function useFleetChannels(
             connectedPeers.clear();
           }
 
-          peerId = `host-\( {code}- \){Math.random().toString(36).slice(2, 10)}`;
-          peer = new Peer(peerId, {
-            host: new URL(RELAY_SERVER).hostname,
-            port: parseInt(new URL(RELAY_SERVER).port || "443"),
-            path: "/peerjs",
-            secure: RELAY_SERVER.startsWith("https"),
-            config: {
-              iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: "stun:stun1.l.google.com:19302" },
-                {
-                  urls: "turn:relay.retroflex.app:3478",
-                  username: "retroflex",
-                  credential: "beacon2024",
-                },
-              ],
-            },
-          });
+          // Deterministic host identity per pair code, so the tablet can dial
+          // back if it is the one that comes online first.
+          const basePeerId = makePeerId("host", code);
+          peerId = idCollision ? `${basePeerId}-${Math.random().toString(36).slice(2, 6)}` : basePeerId;
+          peer = new Peer(peerId, PEER_OPTIONS);
 
-          peer.on("connection", (connection) => {
-            if (!isActive) return;
-
+          // Shared wiring for incoming and outgoing connections.
+          const wireConnection = (connection: DataConnection) => {
             connection.on("open", () => {
               connectedPeers.set(connection.peer, connection);
               connected.add(code);
@@ -496,7 +586,8 @@ export function useFleetChannels(
               reconnectDelay = 1000;
             });
 
-            connection.on("data", (packet: SyncPacket) => {
+            connection.on("data", (data: unknown) => {
+              const packet = data as SyncPacket;
               if (packet?.packetId) {
                 try {
                   connection.send({ type: "ack", acknowledges: packet.packetId });
@@ -515,10 +606,32 @@ export function useFleetChannels(
               logError(`Peer connection error: ${err.message}`);
               connectedPeers.delete(connection.peer);
             });
+          };
+
+          peer.on("connection", (connection) => {
+            if (!isActive) return;
+            wireConnection(connection);
           });
 
           peer.on("open", () => {
             if (!isActive) return;
+
+            // Dial the tablet for this pair code. Hooks are exclusive: the
+            // phone dials the display, and the display accepts (plus dials
+            // back if it started first).
+            const targetPeerId = makePeerId("display", code);
+            dial = () => {
+              if (!isActive || connectedPeers.size > 0) return;
+              try {
+                wireConnection(peer!.connect(targetPeerId, { reliable: true }));
+              } catch (err) {
+                logError(`Dial ${targetPeerId} failed: ${err instanceof Error ? err.message : String(err)}`);
+              }
+            };
+
+            dial();
+            dialTimer = window.setInterval(() => dial?.(), DIAL_RETRY_MS);
+
             // Heartbeat so tablet sees the host
             heartbeatInterval = window.setInterval(() => {
               publishPacket({
@@ -535,7 +648,26 @@ export function useFleetChannels(
           });
 
           peer.on("error", (err) => {
+            const type = (err as { type?: string }).type;
+
+            // Tablet not online yet — retry quietly without tearing the peer down.
+            if (type === "peer-unavailable") {
+              reconnectTimeout = window.setTimeout(() => {
+                if (isActive) dial?.();
+              }, PEER_UNAVAILABLE_RETRY_MS);
+              return;
+            }
+
             logError(`PeerJS error: ${err.message}`);
+
+            if (type === "unavailable-id" && !idCollision) {
+              idCollision = true;
+              reconnectTimeout = window.setTimeout(() => {
+                if (isActive) initPeer();
+              }, 500);
+              return;
+            }
+
             if (isActive && reconnectDelay < 30000) {
               reconnectTimeout = window.setTimeout(() => {
                 if (isActive) initPeer();
@@ -558,6 +690,7 @@ export function useFleetChannels(
         isActive = false;
         if (reconnectTimeout) clearTimeout(reconnectTimeout);
         if (heartbeatInterval) clearInterval(heartbeatInterval);
+        if (dialTimer) clearInterval(dialTimer);
         try {
           bc?.close();
         } catch {

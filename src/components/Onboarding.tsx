@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Logo } from "./Logo";
 import { useStore } from "../store";
 import { PLATFORMS } from "../lib/platforms";
-import type { Platform } from "../types";
 
 export function Onboarding({ go }: { go: (p: string) => void }) {
   const { driver, updateDriver, updateVehicle } = useStore();
@@ -40,7 +39,7 @@ export function Onboarding({ go }: { go: (p: string) => void }) {
                     onClick={() => {
                       if (!driver) return;
                       const platforms = on ? driver.platforms.filter((x) => x !== p.id) : [...driver.platforms, p.id];
-                      updateDriver({ platforms: platforms as Platform[] });
+                      updateDriver({ platforms });
                     }}
                     className={`rounded-2xl border px-4 py-4 text-left ${on ? "border-amber bg-amber/10" : "border-line bg-panel"}`}
                   >

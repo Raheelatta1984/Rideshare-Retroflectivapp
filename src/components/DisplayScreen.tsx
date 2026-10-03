@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Battery, BatteryCharging, Maximize, RotateCcw } from "lucide-react";
-import type { CommercialCampaign, DeviceTelemetry, DisplaySettings, MotionState, Platform, Ride, TabletBattery } from "../types";
+import type { CommercialCampaign, DeviceTelemetry, DisplaySettings, MotionState, Ride, TabletBattery } from "../types";
 import { db, defaultSettings } from "../lib/storage";
 import { PLATFORMS, getPlatform } from "../lib/platforms";
 import { profileForDevice } from "../lib/devices";
@@ -139,7 +139,8 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   // Central power must be ON, then each tablet's own profile controls its display.
   const centralPowered = poweredProp !== undefined ? poweredProp : settings.masterOn !== false;
   const powered = centralPowered && (deviceProfile?.powered ?? true);
-  const apps: Platform[] = deviceProfile?.apps?.length ? deviceProfile.apps : settings.apps?.length ? settings.apps : ["didi"];
+  // Platform *ids* — resolved to PLATFORMS entries further down.
+  const apps: string[] = deviceProfile?.apps?.length ? deviceProfile.apps : settings.apps?.length ? settings.apps : ["didi"];
   const commercialEnabled = deviceProfile?.commercialEnabled ?? false;
   const campaignIds = deviceProfile?.campaignIds ?? [];
   const campaigns = (settings.commercialCampaigns ?? []).filter((campaign) => campaignIds.includes(campaign.id) && (campaign.target ?? "both") !== (position === "front" ? "rear" : "front") && campaignIsComplianceReady(campaign) && (!(settings.nswSafetyMode ?? true) || !!deviceProfile?.commercialParkedConfirmed));
@@ -263,7 +264,7 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   useEffect(() => {
     if (!ride || !pairCode) return;
     if (ride.status !== "en_route" && ride.status !== "stopped") return;
-    if (motion.isStationary && motion.stoppedForMs >= settings.stopDelaySeconds * 1000) {
+    if (motion.isStationary && motion.stoppedForMs >= (settings.stopDelaySeconds ?? 30) * 1000) {
       publish({ type: "motion", motion, ride: { ...ride, status: "arrived", arrivedAt: new Date().toISOString() } });
     }
   }, [motion.stoppedForMs, motion.isStationary, ride?.status, settings.stopDelaySeconds, pairCode]);
@@ -482,7 +483,7 @@ function AppsFace({
   includeBlank,
   blankDurationSeconds,
 }: {
-  apps: Platform[];
+  apps: string[];
   campaigns: CommercialCampaign[];
   commercialEnabled: boolean;
   nswSafetyMode: boolean;
@@ -624,7 +625,7 @@ function PlatformLogo({ platform, backgroundMode, embossed, fade, passengerName 
 }
 
 function platformWordmark(platform: (typeof PLATFORMS)[number]) {
-  const marks: Partial<Record<Platform, string>> = {
+  const marks: Record<string, string> = {
     didi: "DiDi",
     indrive: "inDrive",
     freenow: "FREE NOW",
@@ -642,7 +643,7 @@ function campaignIsComplianceReady(campaign: CommercialCampaign) {
   if (!legal) return false;
   const consents = [legal.appOwner, legal.driver, legal.vehicleOwner, legal.campaignOwner, legal.trademarkAuthorization, legal.safetyAssessment];
   const consentReady = consents.every((consent) => consent.confirmed && consent.signerName.trim() && consent.agreementReference.trim());
-  const referralReady = !campaign.referralCode || Boolean(legal.merchantName.trim() && legal.offerExpiry && legal.privacyPolicyUrl && legal.qrTermsConfirmed && legal.noRiderDataWithoutConsent);
+  const referralReady = !campaign.referralCode || Boolean((legal.merchantName ?? "").trim() && legal.offerExpiry && legal.privacyPolicyUrl && legal.qrTermsConfirmed && legal.noRiderDataWithoutConsent);
   return consentReady && referralReady;
 }
 
@@ -703,7 +704,7 @@ function EnRouteFace({
 }) {
   return (
     <div className="flex h-full w-full flex-col justify-between px-[4vw] py-[3.5vw]">
-      <HeaderRow platform={settings.showPlatform ? platform : ""} color={ride.colorCode} showBar={settings.showColorBar} />
+      <HeaderRow platform={settings.showPlatform ? platform : ""} color={ride.colorCode} showBar={settings.showColorBar ?? true} />
       <div className="flex flex-1 flex-col items-center justify-center text-center">
         <p className="mb-3 text-[11px] tracking-[0.55em] opacity-55">{labels.onTheWay}</p>
         <h1 className="display-name animate-name uppercase" style={{ fontSize: "clamp(64px, 18vw, 220px)" }}>
@@ -731,7 +732,7 @@ function CountdownFace({
   labels: ReturnType<typeof t>;
   palette: Palette;
 }) {
-  const remain = Math.max(0, settings.stopDelaySeconds - motion.stoppedForMs / 1000);
+  const remain = Math.max(0, (settings.stopDelaySeconds ?? 30) - motion.stoppedForMs / 1000);
   const secs = Math.ceil(remain);
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-[4vw]">
@@ -750,7 +751,7 @@ function CountdownFace({
             stroke={ride.colorCode}
             strokeWidth="4"
             strokeDasharray="264"
-            strokeDashoffset={264 * (remain / settings.stopDelaySeconds)}
+            strokeDashoffset={264 * (remain / (settings.stopDelaySeconds ?? 30))}
             strokeLinecap="round"
           />
         </svg>

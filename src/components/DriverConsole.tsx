@@ -17,10 +17,10 @@ import { formatPair } from "../lib/id";
 import { useFleetChannels } from "../lib/sync";
 import { kph, useMotion } from "../lib/motion";
 import { Check } from "lucide-react";
-import type { CommercialCampaign, CommercialCampaignLegal, DeviceProfile, DeviceTelemetry, DisplaySettings, LegalConsent, TabletBattery, TabletDevice } from "../types";
+import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DeviceProfile, DeviceTelemetry, DisplaySettings, DriverRole, LegalConsent, TabletBattery, TabletDevice } from "../types";
 import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice } from "../lib/devices";
 import { canDownloadSource, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
-import { createConsentPdf, deliverAgreementPdf, type AgreementRole } from "../lib/agreements";
+import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
 import { Logo } from "./Logo";
 import { DisplayScreen } from "./DisplayScreen";
 import { useNow } from "../hooks";
@@ -206,7 +206,16 @@ export function DriverConsole({ go }: { go: (p: string) => void }) {
   useEffect(() => {
     if (!driver) return;
     Object.values(connectedDevices).forEach((device) => {
-      const profile = profileForDevice(deviceProfiles, device, device.pairCode, device.position);
+      const profile =
+        profileForDevice(deviceProfiles, device, device.pairCode, device.position) ??
+        createDeviceProfile({
+          id: deviceProfileId(device.id, device.position),
+          pairCode: device.pairCode,
+          position: device.position,
+          deviceId: device.id,
+          label: device.name,
+          apps: settings.apps ?? [],
+        });
       publishTo(device.pairCode, {
         type: "settings",
         targetDeviceId: device.id,
@@ -261,7 +270,16 @@ export function DriverConsole({ go }: { go: (p: string) => void }) {
         };
       });
       Object.values(connectedDevices).forEach((device) => {
-        const profile = profileForDevice(deviceProfiles, device, device.pairCode, device.position);
+        const profile =
+        profileForDevice(deviceProfiles, device, device.pairCode, device.position) ??
+        createDeviceProfile({
+          id: deviceProfileId(device.id, device.position),
+          pairCode: device.pairCode,
+          position: device.position,
+          deviceId: device.id,
+          label: device.name,
+          apps: settings.apps ?? [],
+        });
         publishTo(device.pairCode, {
           type: "settings",
           targetDeviceId: device.id,
@@ -358,7 +376,7 @@ function LiveTab({
   profiles: DeviceProfile[];
   onProfileChange: (profile: DeviceProfile) => void;
   alert: string | null;
-  role: "admin" | "supervisor" | "driver";
+  role: DriverRole;
 }) {
   const { driver, saveSettings } = useStore();
   const allowCommercial = isSourceOwner(driver?.email);
@@ -437,7 +455,7 @@ function LiveTab({
           <div>
             <p className="text-[10px] tracking-[0.22em] text-mist">MOTION SAFETY GATE</p>
             <p className="mt-1 text-sm text-cream">
-              {!motionGate ? "Disabled · platform may display while moving" : !motion.allowed ? "Location permission required · rear stays blank" : !motion.isStationary ? `Moving ${kph(motion.speedMps)} km/h · rear stays blank` : secondsLeft > 0 ? `Stopped · display unlocks in ${secondsLeft}s` : "Stopped long enough · rear display allowed"}
+              {!motionGate ? "Disabled · platform may display while moving" : !motion.allowed ? "Location permission required · rear stays blank" : !motion.isStationary ? `Moving ${kph(motion.speedMps ?? 0)} km/h · rear stays blank` : secondsLeft > 0 ? `Stopped · display unlocks in ${secondsLeft}s` : "Stopped long enough · rear display allowed"}
             </p>
           </div>
           <span className={`rounded-full px-2 py-1 text-[10px] tracking-widest ${safeToDisplay ? "bg-amber text-ink" : "bg-ink text-mist"}`}>{safeToDisplay ? "DISPLAY READY" : "BLANK"}</span>
@@ -594,7 +612,7 @@ function DeviceControlCard({
   onPreview: () => void;
   onChange: (profile: DeviceProfile) => void;
 }) {
-  const toggleApp = (id: import("../types").Platform) => {
+  const toggleApp = (id: string) => {
     if (profile.apps.includes(id) && profile.apps.length === 1) return;
     onChange({ ...profile, apps: profile.apps.includes(id) ? profile.apps.filter((app) => app !== id) : [...profile.apps, id] });
   };
@@ -740,7 +758,7 @@ function HistoryTab({
 }: {
   rides: import("../types").Ride[];
   logs: import("../types").ActivityLog[];
-  role: "admin" | "supervisor" | "driver";
+  role: DriverRole;
 }) {
   const done = useMemo(() => rides.filter((r) => r.status === "complete" || r.completedAt), [rides]);
   return (
@@ -1004,13 +1022,13 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
     }));
   };
 
-  const issueConsent = async (role: AgreementRole) => {
+  const issueConsent = async (role: ConsentRole) => {
     if (!title.trim()) {
       setCampaignError("Enter a campaign title before issuing an agreement PDF.");
       return;
     }
     const consent = legal[role];
-    if (!consent.signerName.trim() || !consent.email.trim() || !consent.agreementReference.trim()) {
+    if (!consent.signerName.trim() || !(consent.email ?? "").trim() || !consent.agreementReference.trim()) {
       setCampaignError("Each signed consent needs the legal signer name, email, and written agreement reference.");
       return;
     }
@@ -1334,11 +1352,11 @@ function campaignLegalIssues(legal: CommercialCampaignLegal, requiresOfferTerms:
     ["NSW/site safety assessment", legal.safetyAssessment],
   ] as const;
   for (const [label, consent] of named) {
-    if (!consent.confirmed || !consent.signerName.trim() || !consent.email.trim() || !consent.agreementReference.trim()) {
+    if (!consent.confirmed || !consent.signerName.trim() || !(consent.email ?? "").trim() || !consent.agreementReference.trim()) {
       return [`Record a signed ${label} with signer and agreement reference before approving this campaign.`];
     }
   }
-  if (requiresOfferTerms && (!legal.merchantName.trim() || !legal.offerExpiry || !legal.privacyPolicyUrl || !legal.qrTermsConfirmed || !legal.noRiderDataWithoutConsent)) {
+  if (requiresOfferTerms && (!(legal.merchantName ?? "").trim() || !legal.offerExpiry || !legal.privacyPolicyUrl || !legal.qrTermsConfirmed || !legal.noRiderDataWithoutConsent)) {
     return ["Referral/discount campaigns require merchant name, expiry, privacy policy URL, clear terms confirmation and rider-data consent confirmation."];
   }
   return [];
@@ -1359,7 +1377,7 @@ function ConsentRow({ label, consent, onChange, onIssue }: { label: string; cons
   );
 }
 
-function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ label, on, onChange }: { label: string; on?: boolean; onChange: (v: boolean) => void }) {
   return (
     <button onClick={() => onChange(!on)} className="flex w-full items-center justify-between rounded-2xl border border-line bg-panel px-4 py-3 text-sm">
       {label}

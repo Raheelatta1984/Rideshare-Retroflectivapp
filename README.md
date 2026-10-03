@@ -136,3 +136,24 @@ src/components/DisplayScreen.tsx rear-window OS
 .devcontainer/                  Codespaces auto-start
 .github/workflows/pages.yml     GitHub Pages deploy
 ```
+
+## Testing & configuration
+
+```bash
+npm ci
+npm run verify     # typecheck + 55 tests + build + artifact checks
+npm run dev -- --host 0.0.0.0
+```
+
+CI runs the same on every push to `main` (`.github/workflows/ci.yml`).
+See **[TESTING.md](./TESTING.md)** for the automated coverage map and the manual
+QA script, and **[BUG-REPORT.md](./BUG-REPORT.md)** for the fixes shipped in this
+pass (mangled template literals, the missing PeerJS dial, the dead relay).
+
+Environment variables are all optional — copy `.env.example` to `.env.local`:
+
+| Variable | Purpose |
+| --- | --- |
+| `VITE_RELAY_SERVER` | Your own relay + PeerJS host. Unset = public PeerJS cloud, no relay traffic |
+| `VITE_PEER_HOST` / `_PORT` / `_PATH` | PeerJS signalling server (defaults to `0.peerjs.com:443`) |
+| `VITE_TURN_URL` / `_USERNAME` / `_CREDENTIAL` | TURN relay for restrictive mobile networks |

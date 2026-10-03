@@ -76,8 +76,25 @@ export const PLATFORMS: Platform[] = [
   },
 ];
 
-export function getPlatform(id: string): Platform | undefined {
-  return PLATFORMS.find((p) => p.id === id);
+/**
+ * Look up a platform by id.
+ *
+ * Always returns a Platform: every caller renders .name/.accent/.short directly,
+ * so an unknown id (e.g. a ride stored with a platform we no longer ship) used
+ * to crash the history list with "Cannot read properties of undefined".
+ */
+export function getPlatform(id: string): Platform {
+  return (
+    PLATFORMS.find((p) => p.id === id) ?? {
+      id: id || "unknown",
+      name: id ? id.charAt(0).toUpperCase() + id.slice(1) : "Rideshare",
+      short: (id || "??").slice(0, 2).toUpperCase(),
+      color: "#1C1C1C",
+      text: "#F4EDE1",
+      accent: "#8A8A8A",
+      blurb: "Unrecognised rideshare platform.",
+    }
+  );
 }
 
 // Sample rides for demo and testing
