@@ -1,14 +1,6 @@
-// Rideshare platforms supported by Retroflex
-export interface Platform {
-  id: string;
-  name: string;
-  short: string;
-  color: string;
-  text: string;
-  accent: string;
-  blurb: string;
-}
+import type { Platform, Ride } from "../types";
 
+// Rideshare platforms supported by Retroflex
 export const PLATFORMS: Platform[] = [
   {
     id: "uber",
@@ -81,5 +73,73 @@ export const PLATFORMS: Platform[] = [
     text: "#000000",
     accent: "#FFCC00",
     blurb: "Brazil's established taxi and ride-hailing app.",
+  },
+];
+
+export function getPlatform(id: string): Platform | undefined {
+  return PLATFORMS.find((p) => p.id === id);
+}
+
+// Sample rides for demo and testing
+export const SAMPLE_RIDES: Ride[] = [
+  {
+    id: "ride_1",
+    driverId: "demo",
+    platform: "uber",
+    passengerFirst: "Sarah",
+    passengerLastInitial: "M",
+    colorCode: "#FF6B6B",
+    pin: "1234",
+    pickup: "123 Main St, Downtown",
+    dropoff: "456 Park Ave, Midtown",
+    fare: "$28.50",
+    etaMinutes: 12,
+    status: "incoming",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "ride_2",
+    driverId: "demo",
+    platform: "didi",
+    passengerFirst: "James",
+    passengerLastInitial: "K",
+    colorCode: "#4ECDC4",
+    pin: "5678",
+    pickup: "789 Market St",
+    dropoff: "321 Harbor Blvd",
+    fare: "$35.00",
+    etaMinutes: 8,
+    status: "incoming",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "ride_3",
+    driverId: "demo",
+    platform: "lyft",
+    passengerFirst: "Emma",
+    passengerLastInitial: "J",
+    colorCode: "#FFE66D",
+    pin: "9012",
+    pickup: "555 Broadway",
+    dropoff: "777 5th Avenue",
+    fare: "$24.75",
+    etaMinutes: 15,
+    status: "incoming",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "ride_4",
+    driverId: "demo",
+    platform: "ola",
+    passengerFirst: "Arjun",
+    passengerLastInitial: "P",
+    colorCode: "#95E1D3",
+    pin: "3456",
+    pickup: "999 Tech Park",
+    dropoff: "111 Innovation Ave",
+    fare: "$18.50",
+    etaMinutes: 6,
+    status: "incoming",
+    createdAt: new Date().toISOString(),
   },
 ];
