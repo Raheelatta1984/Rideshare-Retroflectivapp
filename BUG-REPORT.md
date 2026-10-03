@@ -104,7 +104,18 @@ npm run dev -- --host 0.0.0.0     # then open #/lab
 
 Manual pass (2 minutes): `#/lab` → flip the switch → `#/login` (`driver@retroflex.app` / `demo1234`) → Settings → change Auto brightness → `#/lab` again shows the new value. Details in `TESTING.md`.
 
-## 7. Recommended next (not done — needs your call)
+## 7. One-time cleanup after you deploy this
+
+The corrupted id format is already stored in `localStorage` on devices that ran
+the old build (drivers, rides, logs and — most visibly — device profiles keyed
+`\( {pairCode}: \){position}`). New records get correct ids, but the old rows
+stay behind, so a tablet may show one stale duplicate device group.
+
+Clear site data **once** on each device after deploying (Chrome: site settings →
+Clear & reset → or DevTools → Application → Storage → Clear site data), then
+re-pair. Nothing in `localStorage` is server-side, so nothing else is affected.
+
+## 8. Recommended next (not done — needs your call)
 
 1. **`stopDelaySeconds` defaults to 30 s**, but the product copy says the name
    appears after **five seconds** of being stopped. Which is right?
