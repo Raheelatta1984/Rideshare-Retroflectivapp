@@ -3,6 +3,8 @@ import { Battery, BatteryCharging, Maximize, RotateCcw } from "lucide-react";
 import type { CommercialCampaign, DeviceTelemetry, DisplaySettings, MotionState, Ride, TabletBattery } from "../types";
 import { db, defaultSettings } from "../lib/storage";
 import { PLATFORMS, getPlatform } from "../lib/platforms";
+import { getBackend } from "../lib/backend";
+import { EventQueue } from "../lib/backend/queue";
 import {
   buildPlaylist,
   campaignBrightness,
@@ -322,6 +324,13 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   }) / 100;
   const telemetrySignature = `${powered}|${apps.join(",")}|${brightness}|${deviceProfile?.displayDurationSeconds ?? settings.displayDurationSeconds ?? 4.5}|${deviceProfile?.includeBlank ?? settings.includeBlank ?? false}`;
 
+  // Phase 2: proof-of-play goes to the Event API (queued + retried off-network).
+  const eventQueueRef = useRef<EventQueue | null>(null);
+  if (!eventQueueRef.current) {
+    eventQueueRef.current = new EventQueue({ backend: getBackend(), flushMs: 20000, batchSize: 10 });
+  }
+  useEffect(() => () => eventQueueRef.current?.stop(), []);
+
   const handlePlaylistEvent = useCallback((event: { kind: "platform" | "campaign" | "blank"; title: string; id?: string; brightnessCap?: number }) => {
     setActiveContent(event.title);
     // null = no campaign on screen, so no extra cap applies.
@@ -337,6 +346,22 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
     };
     db.addTabletActivity(activity);
     publishRef.current({ type: "activity", activity });
+
+    // Phase 2 Event API: proof-of-play for the campaign portal + billing evidence.
+    eventQueueRef.current?.proofOfPlay({
+      campaignId: event.id ?? event.title,
+      deviceId: deviceIdRef.current,
+      pairCode,
+      title: event.title,
+    });
+
+    // Event API: proof-of-play for the campaign portal + billing evidence.
+    eventQueueRef.current?.proofOfPlay({
+      campaignId: event.id ?? event.title,
+      deviceId: deviceIdRef.current,
+      pairCode,
+      title: event.title,
+    });
   }, [pairCode, preview, settings.nswSafetyMode, position]);
 
   useEffect(() => {

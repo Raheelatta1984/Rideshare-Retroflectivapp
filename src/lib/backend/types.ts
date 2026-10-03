@@ -1,0 +1,121 @@
+import type {
+  CampaignApprovalState,
+  CampaignEventRecord,
+  CommercialCampaign,
+  PlaylistManifest,
+} from "../../types";
+
+/**
+ * Phase 2 backend contract.
+ *
+ * Every commercial-signage backend operation goes through these interfaces so
+ * the app is provider-agnostic:
+ *
+ *   - `local.ts`    works offline today (device storage); used by the demo,
+ *                   the tests and any deployment without a backend.
+ *   - `supabase.ts` talks to Supabase Postgres + Storage + Realtime over REST.
+ *
+ * `index.ts` picks one at runtime. Nothing in the UI imports a provider
+ * directly, so swapping providers never touches component code.
+ */
+
+export type BackendKind = "local" | "supabase";
+
+export interface BackendInfo {
+  kind: BackendKind;
+  label: string;
+  /** False when the app is falling back because config is missing/incomplete. */
+  configured: boolean;
+  detail?: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Campaigns
+ * ------------------------------------------------------------------ */
+
+export interface CampaignQuery {
+  /** Only campaigns changed since this timestamp (used for cheap polling). */
+  since?: number;
+  limit?: number;
+}
+
+export interface CampaignRepository {
+  list(query?: CampaignQuery): Promise<CommercialCampaign[]>;
+  get(id: string): Promise<CommercialCampaign | null>;
+  upsert(campaign: CommercialCampaign): Promise<CommercialCampaign>;
+  remove(id: string): Promise<void>;
+  /** Review action for the admin approval workflow. */
+  setApproval(
+    id: string,
+    state: CampaignApprovalState,
+    reviewer: string,
+    note?: string,
+  ): Promise<CommercialCampaign | null>;
+}
+
+/* ------------------------------------------------------------------ *
+ * Assets
+ * ------------------------------------------------------------------ */
+
+export interface AssetStore {
+  /**
+   * Store an asset and return a URL the display can render.
+   * Local: a data URL. Supabase: a public (or signed) storage URL.
+   */
+  put(input: { campaignId: string; filename: string; contentType: string; data: Blob | string }): Promise<{ url: string; path?: string; bytes: number }>;
+  /** Signed/short-lived URL for an already-stored asset. */
+  signedUrl(path: string, expiresInSeconds?: number): Promise<string>;
+  remove(path: string): Promise<void>;
+}
+
+/* ------------------------------------------------------------------ *
+ * Playlist manifest
+ * ------------------------------------------------------------------ */
+
+export interface ManifestService {
+  /** Build (and, when configured, sign) the playlist manifest. */
+  issue(campaigns: CommercialCampaign[]): Promise<PlaylistManifest>;
+  /** Verify signature + integrity before the display trusts it. */
+  verify(manifest: PlaylistManifest): Promise<{ valid: boolean; reason?: string }>;
+}
+
+/* ------------------------------------------------------------------ *
+ * Events
+ * ------------------------------------------------------------------ */
+
+export interface EventSink {
+  /** Send a batch of events. Must reject on failure so the queue can retry. */
+  send(events: CampaignEventRecord[]): Promise<void>;
+  /** Recent events, newest first, for the proof-of-play view. */
+  list(limit?: number): Promise<CampaignEventRecord[]>;
+}
+
+/* ------------------------------------------------------------------ *
+ * Realtime
+ * ------------------------------------------------------------------ */
+
+export interface Unsubscribe {
+  (): void;
+}
+
+export interface RealtimeOptions {
+  /** Poll interval in ms for providers without a websocket transport. */
+  pollMs?: number;
+}
+
+export interface Backend {
+  info(): BackendInfo;
+  campaigns: CampaignRepository;
+  assets: AssetStore;
+  manifest: ManifestService;
+  events: EventSink;
+  /**
+   * Subscribe to campaign/approval changes. Returns an unsubscribe function.
+   * Supabase: Realtime broadcast/postgres_changes. Local: in-process events
+   * plus an optional cross-tab channel.
+   */
+  subscribe(onChange: () => void, options?: RealtimeOptions): Unsubscribe;
+}
+
+/** Provider-agnostic re-export so adapters import everything from one place. */
+export type { CampaignEventRecord };

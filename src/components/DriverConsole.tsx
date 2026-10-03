@@ -22,6 +22,8 @@ import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice }
 import { canDownloadSource, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
 import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
 import { campaignDraftIssues, campaignScheduleLabel } from "../lib/signage";
+import { getBackend } from "../lib/backend";
+import { SignageBackendPanel } from "./SignageBackendPanel";
 import { Logo } from "./Logo";
 import { DisplayScreen } from "./DisplayScreen";
 import { useNow } from "../hooks";
@@ -961,6 +963,23 @@ function SettingsTab() {
       )}
 
       {admin && <EnterpriseLab settings={settings} saveSettings={saveSettings} recordActivity={recordActivity} />}
+      {admin && (
+        <SignageBackendPanel
+          reviewer={driver?.name ?? "admin"}
+          onRefreshCampaigns={() => {
+            // Pull anything the backend has (e.g. an approval from another device)
+            // into the local settings the display reads.
+            void (async () => {
+              try {
+                const remote = await getBackend().campaigns.list({ limit: 50 });
+                if (remote.length) saveSettings({ commercialCampaigns: remote });
+              } catch {
+                // Offline or unconfigured backend: keep the local copy.
+              }
+            })();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1138,6 +1157,11 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
     };
     saveSettings({ commercialCampaigns: [...campaigns, campaign] });
     recordActivity({ action: "Commercial campaign approved", details: { campaign: campaign.title, mediaType: campaign.mediaType, dwellSeconds: campaign.displaySeconds, nswSafetyMode: nswSafety, merchant: campaign.legal?.merchantName } });
+    // Phase 2: mirror the campaign to the backend so the approval workflow and
+    // the client portal see it. Local adapter = on-device; Supabase = shared.
+    void getBackend()
+      .campaigns.upsert({ ...campaign, approval: { state: "pending" }, approved: false })
+      .catch(() => undefined);
     setTitle("");
     setAssetDataUrl("");
     setDiscountText("");

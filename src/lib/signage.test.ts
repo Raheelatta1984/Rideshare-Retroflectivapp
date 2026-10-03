@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvalLabel,
+  campaignApprovalState,
+  distanceKm,
+  geoDecision,
   buildPlaylist,
   campaignBlockReasons,
   campaignBrightness,
@@ -330,5 +334,77 @@ describe("console draft validation", () => {
   it("blocks non-static media under safety mode", () => {
     expect(campaignDraftIssues({ ...base, mediaType: "video" }).join(" ")).toContain("static image");
     expect(campaignDraftIssues({ ...base, mediaType: "video", nswSafetyMode: false })).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Phase 2 — approval workflow
+ * ------------------------------------------------------------------ */
+
+describe("approval workflow", () => {
+  it("falls back to the legacy approved flag when no workflow state exists", () => {
+    expect(campaignApprovalState(approvedCampaign({ approval: undefined }))).toBe("approved");
+    expect(campaignApprovalState(approvedCampaign({ approved: false, approval: undefined }))).toBe("draft");
+  });
+
+  it("prefers the workflow state once a review has happened", () => {
+    expect(campaignApprovalState(approvedCampaign({ approval: { state: "pending" } }))).toBe("pending");
+    expect(campaignApprovalState(approvedCampaign({ approved: true, approval: { state: "rejected" } }))).toBe("rejected");
+  });
+
+  it("gates eligibility on the approval state, not the boolean", () => {
+    expect(campaignIsEligible(approvedCampaign({ approval: { state: "pending" } }), SAFE_CONTEXT)).toBe(false);
+    expect(campaignBlockReasons(approvedCampaign({ approval: { state: "pending" } }), SAFE_CONTEXT)).toContain("not-approved");
+    expect(campaignIsEligible(approvedCampaign({ approval: { state: "approved" } }), SAFE_CONTEXT)).toBe(true);
+  });
+
+  it("labels the review for the console and client portal", () => {
+    expect(approvalLabel(approvedCampaign({ approval: { state: "pending" } }))).toBe("pending");
+    expect(approvalLabel(approvedCampaign({ approval: { state: "approved", reviewer: "Raheel", reviewedAt: Date.now() } })))
+      .toContain("approved · Raheel");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Phase 2 — geographic rules
+ * ------------------------------------------------------------------ */
+
+describe("geographic rules", () => {
+  const sydney = { latitude: -33.8688, longitude: 151.2093 };
+
+  it("measures distance", () => {
+    expect(distanceKm(sydney, sydney)).toBe(0);
+    // Sydney -> Melbourne is ~714 km.
+    const melbourne = { latitude: -37.8136, longitude: 144.9631 };
+    expect(distanceKm(sydney, melbourne)).toBeGreaterThan(700);
+    expect(distanceKm(sydney, melbourne)).toBeLessThan(730);
+  });
+
+  it("decides inside / outside / unknown", () => {
+    const rule = { ...sydney, radiusKm: 5 };
+    expect(geoDecision(rule, sydney)).toBe("inside");
+    // ~1.6 km from the centre: inside a 5 km radius.
+    expect(geoDecision(rule, { latitude: -33.88, longitude: 151.22 })).toBe("inside");
+    expect(geoDecision(rule, { latitude: -33.95, longitude: 151.3 })).toBe("outside");
+    expect(geoDecision(rule, undefined)).toBe("unknown");
+    expect(geoDecision(undefined, sydney)).toBe("inside");
+  });
+
+  it("blocks a campaign outside its area", () => {
+    const campaign = approvedCampaign({ geoRule: { ...sydney, radiusKm: 3 } });
+    const melbourne = { latitude: -37.8136, longitude: 144.9631 };
+    expect(campaignBlockReasons(campaign, { ...SAFE_CONTEXT, location: melbourne })).toContain("outside-geo");
+    expect(campaignIsEligible(campaign, { ...SAFE_CONTEXT, location: sydney })).toBe(true);
+  });
+
+  // Fail closed: no GPS fix must not mean "show the advert anyway".
+  it("blocks when there is no fix, and allows it only when explicitly permitted", () => {
+    const campaign = approvedCampaign({ geoRule: { ...sydney, radiusKm: 3 } });
+    expect(campaignBlockReasons(campaign, { ...SAFE_CONTEXT, location: undefined })).toContain("outside-geo");
+    expect(campaignIsEligible(campaign, { ...SAFE_CONTEXT, location: undefined, requireLocation: false })).toBe(true);
+  });
+
+  it("leaves campaigns without a geo rule unaffected", () => {
+    expect(campaignIsEligible(approvedCampaign({ geoRule: undefined }), { ...SAFE_CONTEXT, location: undefined })).toBe(true);
   });
 });

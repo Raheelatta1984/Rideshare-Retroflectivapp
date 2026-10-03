@@ -1,4 +1,13 @@
-import type { CommercialCampaign, DeviceProfile } from "../types";
+import type {
+  CampaignApprovalState,
+  CampaignGeoRule,
+  CampaignMediaType,
+  CommercialCampaign,
+  DeviceProfile,
+  GeoPoint,
+} from "../types";
+
+export type { CampaignMediaType };
 
 /**
  * Commercial signage engine — implements the playlist and safety rules from
@@ -116,6 +125,67 @@ export function isSafeAssetUrl(value: string | undefined): boolean {
  * Compliance + eligibility
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * Approval workflow (plan: admin approval + client portal)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Resolve the approval state. Campaigns created before Phase 2 only carry the
+ * legacy `approved` boolean, so that stays authoritative when no workflow
+ * state has been recorded.
+ */
+export function campaignApprovalState(campaign: CommercialCampaign): CampaignApprovalState {
+  if (campaign.approval?.state) return campaign.approval.state;
+  return campaign.approved ? "approved" : "draft";
+}
+
+export function campaignIsApproved(campaign: CommercialCampaign): boolean {
+  return campaignApprovalState(campaign) === "approved";
+}
+
+/** Human label for the console / client portal. */
+export function approvalLabel(campaign: CommercialCampaign): string {
+  const state = campaignApprovalState(campaign);
+  const approval = campaign.approval;
+  if (!approval?.reviewedAt) return state;
+  const when = new Date(approval.reviewedAt).toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${state} · ${approval.reviewer ?? "unknown"} · ${when}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Geographic rules
+ * ------------------------------------------------------------------ */
+
+/** Great-circle distance in km between two points (haversine). */
+export function distanceKm(a: GeoPoint, b: GeoPoint): number {
+  const R = 6371;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export type GeoDecision = "inside" | "outside" | "unknown";
+
+/**
+ * Is the device inside the campaign's permitted area?
+ * "unknown" means we have no fix — the caller decides whether to allow it.
+ */
+export function geoDecision(rule: CampaignGeoRule | undefined, at: GeoPoint | undefined): GeoDecision {
+  if (!rule) return "inside";
+  if (!at) return "unknown";
+  return distanceKm(rule, at) <= rule.radiusKm ? "inside" : "outside";
+}
+
 export type CampaignBlockReason =
   | "disabled"
   | "not-approved"
@@ -126,7 +196,8 @@ export type CampaignBlockReason =
   | "parked-confirmation-missing"
   | "media-not-static"
   | "asset-missing"
-  | "referral-incomplete";
+  | "referral-incomplete"
+  | "outside-geo";
 
 export interface CampaignContext {
   now?: number;
@@ -137,6 +208,10 @@ export interface CampaignContext {
   parkedConfirmed?: boolean;
   /** Current speed, used for the dwell floor. */
   speedKph?: number;
+  /** Device position for geographic rules; omit when no fix is available. */
+  location?: GeoPoint;
+  /** Treat a missing fix as outside the area (default true for safety). */
+  requireLocation?: boolean;
 }
 
 /** Legal terms a referral/discount campaign must carry (plan: "Make QR/referral terms clear"). */
@@ -198,7 +273,7 @@ export function campaignBlockReasons(
   const now = context.now ?? Date.now();
 
   if (!campaign.enabled) reasons.push("disabled");
-  if (!campaign.approved) reasons.push("not-approved");
+  if (!campaignIsApproved(campaign)) reasons.push("not-approved");
 
   // A campaign targeting "both" shows everywhere; otherwise it must match this screen.
   const target = campaign.target ?? "both";
@@ -217,6 +292,12 @@ export function campaignBlockReasons(
   if (!src || !isSafeAssetUrl(src)) reasons.push("asset-missing");
 
   if (campaignReferralIssues(campaign).length > 0) reasons.push("referral-incomplete");
+
+  // Geographic rule: a missing fix blocks by default (fail closed).
+  const geo = geoDecision(campaign.geoRule, context.location);
+  if (geo === "outside" || (geo === "unknown" && (context.requireLocation ?? true))) {
+    reasons.push("outside-geo");
+  }
 
   return [...new Set(reasons)];
 }

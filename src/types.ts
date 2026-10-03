@@ -204,6 +204,78 @@ export interface DeviceTelemetry {
   activeContent?: string;
 }
 
+/* ------------------------------------------------------------------ *
+ * Phase 2 — commercial backend types
+ * ------------------------------------------------------------------ */
+
+/** Admin approval workflow (plan: "Admin approval workflow"). */
+export type CampaignApprovalState = "draft" | "pending" | "approved" | "rejected";
+
+export interface CampaignApproval {
+  state: CampaignApprovalState;
+  reviewer?: string;
+  reviewedAt?: number;
+  note?: string;
+}
+
+/**
+ * Geographic rule (plan: "campaign database with start/end dates, geographic
+ * rules and approval state"). A campaign is only eligible inside this circle.
+ */
+export interface CampaignGeoRule {
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+}
+
+export type CampaignEventKind = "proof-of-play" | "qr-scan" | "referral-conversion";
+
+/** Event API record (plan: "Event API for proof-of-play, QR scans and referral conversions"). */
+export interface CampaignEventRecord {
+  id: string;
+  campaignId: string;
+  deviceId: string;
+  pairCode?: string;
+  kind: CampaignEventKind;
+  at: number;
+  dwellSeconds?: number;
+  meta?: Record<string, unknown>;
+}
+
+export interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+/** One entry in the signed playlist manifest. */
+export interface ManifestEntry {
+  id: string;
+  title: string;
+  asset: string;
+  mediaType: CampaignMediaType;
+  dwellSeconds: number;
+  displaySeconds: number;
+  brightnessCap?: number;
+  startAt?: number;
+  endAt?: number;
+  geoRule?: CampaignGeoRule;
+}
+
+/**
+ * Signed playlist manifest (plan: "Signed asset URLs and a signed playlist
+ * manifest"). The signature covers the canonical serialisation of `entries`.
+ */
+export interface PlaylistManifest {
+  version: number;
+  issuedAt: number;
+  keyId?: string;
+  entries: ManifestEntry[];
+  signature?: string;
+  algorithm?: string;
+}
+
+export type CampaignMediaType = "image" | "video" | "gif";
+
 export interface CommercialCampaign {
   id: string;
   title: string;
@@ -220,8 +292,12 @@ export interface CommercialCampaign {
   endAt?: number;
   /** Per-campaign brightness ceiling (percent, 18-100). */
   brightnessCap?: number;
+  /** Phase 2 approval state; falls back to `approved` when absent. */
+  approval?: CampaignApproval;
+  /** Phase 2 geographic rule; campaigns outside it are blocked. */
+  geoRule?: CampaignGeoRule;
   /** "gif" is only allowed when NSW safety mode is off. */
-  mediaType: "image" | "video" | "gif";
+  mediaType: CampaignMediaType;
   displaySeconds: number;
   target?: "rear" | "front" | "both";
   discountText?: string;
