@@ -298,7 +298,9 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
 
   const hour = new Date().getHours();
   const theme = settings.theme === "auto" ? (hour >= 6 && hour < 18 ? "day" : "night") : settings.theme;
-  const palette = palettes[theme];
+  // Never trust the theme key: a settings record from an older build may not
+  // have one, and an undefined palette used to blank the whole display.
+  const palette = palettes[theme] ?? palettes.night;
   const platform = ride ? getPlatform(ride.platform) : null;
   const labels = t(settings.language);
   const status = ride?.status ?? "idle";

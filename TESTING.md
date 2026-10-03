@@ -100,6 +100,14 @@ server). Ticks are what a passing run looks like.
 
 ### Accounts
 
+Stored settings are repaired on read (`normalizeDeviceProfile`, plus a settings
+merge over defaults in `getSettings`). Records written by an older build used to
+crash the console render — the whole app went blank and nothing responded. If a
+screen ever does fail to render, an error boundary now shows a recovery page with
+**Reload** and **Clear local data & reload** instead of a dead black screen.
+
+### Accounts
+
 | Account | Password | Role | What it unlocks |
 | --- | --- | --- | --- |
 | `tic.raheel@gmail.com` | `Abc@123` | admin | Commercial signage and QA, the Phase 2 backend panel, campaign assignment. **Seeded on first boot** — no signup needed. |
@@ -158,6 +166,13 @@ usually one of these, not a broken campaign:
 | Device profile `powered` | on | Live tab device profile |
 | Motion gate ("Display only while stopped") | on, 60 s stationary wait | Booth tab |
 | Campaign assigned to *that* profile | — | Live tab → campaign chips |
+
+The console now answers this for you: each campaign in the Commercial signage
+list ends with a line saying either *"Ready for the rear glass…"* or
+*"Not showing yet: …"* followed by the specific blockers (power switch off,
+commercial playlist off, not assigned to this device, parked confirmation off,
+motion gate waiting). When a campaign is on the glass and nobody can see it,
+that line is the first thing to read.
 
 Open the display at `?mode=tablet&display=PAIRCODE` (rear pair code from the
 console) or `#/display/PAIRCODE` in a second tab. For a desk test, switch off

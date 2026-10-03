@@ -1,3 +1,4 @@
+import { normalizeDeviceProfile } from "./devices";
 import type {
   ActivityLog,
   Driver,
@@ -82,7 +83,20 @@ export const db = {
       localStorage.getItem("rf:settings"),
       {},
     );
-    return bucket[driverId] ?? defaultSettings();
+    const saved = bucket[driverId];
+    if (!saved) return defaultSettings();
+    // Repair on read. A settings record written by an older build can be missing
+    // whole keys — a missing `theme` alone crashed the display with
+    // "Cannot read properties of undefined (reading 'fg')". Defaults fill every
+    // gap; explicit nulls are ignored rather than trusted.
+    const defined = Object.fromEntries(
+      Object.entries(saved as unknown as Record<string, unknown>).filter(([, value]) => value !== null && value !== undefined),
+    ) as Partial<DisplaySettings>;
+    return {
+      ...defaultSettings(),
+      ...defined,
+      deviceProfiles: (Array.isArray(saved.deviceProfiles) ? saved.deviceProfiles : []).map(normalizeDeviceProfile),
+    };
   },
 
   setSession: (session: { driverId: string } | null) => {

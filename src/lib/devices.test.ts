@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice } from "./devices";
+import { codeProfileId, createDeviceProfile, deviceProfileId, normalizeDeviceProfile, profileForDevice } from "./devices";
 import type { Device, DeviceProfile } from "../types";
 
 const device: Device = {
@@ -98,5 +98,69 @@ describe("profileForDevice", () => {
   it("still matches by code when the device is unknown", () => {
     const found = profileForDevice([byPair], undefined, "7K2M9Q", "rear");
     expect(found?.id).toBe(byPair.id);
+  });
+});
+
+describe("stored profile repair", () => {
+  /**
+   * Regression: a device profile saved by an older build (no `apps`, no
+   * `campaignIds`, no dwell fields) threw "Cannot read properties of undefined
+   * (reading 'includes')" while the console rendered, which blanked the whole
+   * app — every control stopped responding, including the live screen mirror.
+   */
+  it("repairs a bare legacy record into a complete profile", () => {
+    const legacy = { id: "profile:7K2M9Q:rear", pairCode: "7K2M9Q", position: "rear", powered: true } as never;
+    const profile = normalizeDeviceProfile(legacy);
+
+    expect(profile.apps).toEqual([]);
+    expect(profile.campaignIds).toEqual([]);
+    expect(profile.displayDurationSeconds).toBe(30);
+    expect(profile.blankDurationSeconds).toBe(5);
+    expect(profile.commercialEnabled).toBe(false);
+    expect(profile.commercialParkedConfirmed).toBe(false);
+    // The fields the console renders unguarded must exist and be usable.
+    expect(profile.apps.includes("uber")).toBe(false);
+    expect(profile.displayDurationSeconds.toFixed(1)).toBe("30.0");
+  });
+
+  it("survives junk types instead of trusting them", () => {
+    const broken = normalizeDeviceProfile({
+      pairCode: "ABC123",
+      position: "rear",
+      apps: "uber" as never,
+      campaignIds: [1, "cmp_ok", null] as never,
+      brightness: Number.NaN,
+      displayDurationSeconds: "12" as never,
+      powered: "yes" as never,
+      commercialEnabled: 1 as never,
+    });
+
+    expect(broken.apps).toEqual([]);
+    expect(broken.campaignIds).toEqual(["cmp_ok"]);
+    expect(broken.brightness).toBe(70);
+    expect(broken.displayDurationSeconds).toBe(30);
+    expect(broken.powered).toBe(true);
+    expect(broken.commercialEnabled).toBe(false);
+  });
+
+  it("keeps good values untouched", () => {
+    const original = createDeviceProfile({
+      pairCode: "7K2M9Q",
+      position: "rear",
+      apps: ["uber", "didi"],
+      brightness: 42,
+      displayDurationSeconds: 12,
+      commercialEnabled: true,
+      campaignIds: ["cmp_demo_seed"],
+      commercialParkedConfirmed: true,
+    });
+    expect(normalizeDeviceProfile(original)).toEqual(original);
+  });
+
+  it("hands back a complete profile from profileForDevice", () => {
+    const stored = [{ id: "profile:7K2M9Q:rear", pairCode: "7K2M9Q", position: "rear" } as never];
+    const found = profileForDevice(stored, undefined, "7K2M9Q", "rear");
+    expect(found?.apps).toEqual([]);
+    expect(found?.displayDurationSeconds).toBe(30);
   });
 });

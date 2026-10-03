@@ -18,10 +18,10 @@ import { useFleetChannels } from "../lib/sync";
 import { kph, useMotion } from "../lib/motion";
 import { Check } from "lucide-react";
 import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DeviceProfile, DeviceTelemetry, DisplaySettings, DriverRole, LegalConsent, TabletBattery, TabletDevice } from "../types";
-import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice } from "../lib/devices";
+import { codeProfileId, createDeviceProfile, deviceProfileId, normalizeDeviceProfile, profileForDevice } from "../lib/devices";
 import { canDownloadSource, isCommercialOperator, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
 import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
-import { campaignDraftIssues, campaignScheduleLabel } from "../lib/signage";
+import { campaignBlockReasons, campaignDraftIssues, campaignScheduleLabel } from "../lib/signage";
 import { buildSeedCampaign, enableCommercialOnProfile, SEED_CAMPAIGN_ID } from "../lib/demo";
 import { getBackend } from "../lib/backend";
 import { SignageBackendPanel } from "./SignageBackendPanel";
@@ -73,7 +73,7 @@ export function DriverConsole({ go }: { go: (p: string) => void }) {
     passengerNameEnabled: false,
   }) : null;
   const deviceProfiles = useMemo(() => {
-    const saved = settings.deviceProfiles ?? [];
+    const saved = (settings.deviceProfiles ?? []).map(normalizeDeviceProfile);
     const defaults = [rearPrimaryProfile, frontPrimaryProfile].filter(Boolean) as DeviceProfile[];
     return [...defaults.filter((profile) => !saved.some((item) => item.id === profile.id)), ...saved];
   }, [settings.deviceProfiles, rearPrimaryProfile?.id, frontPrimaryProfile?.id, driver?.platforms, driver?.pairCode, driver?.frontPairCode]);
@@ -579,7 +579,8 @@ function ProfilePlatformPicker({ profile, title, powered, onChange }: { profile:
       </div>
       <div className="grid grid-cols-2 gap-3">
         {PLATFORMS.map((platform) => {
-          const selected = profile.apps.includes(platform.id);
+          const apps = profile.apps ?? [];
+          const selected = apps.includes(platform.id);
           return (
             <button key={platform.id} onClick={() => {
               if (selected && profile.apps.length === 1) return;
@@ -616,9 +617,10 @@ function DeviceControlCard({
   onPreview: () => void;
   onChange: (profile: DeviceProfile) => void;
 }) {
+  const apps = profile.apps ?? [];
   const toggleApp = (id: string) => {
-    if (profile.apps.includes(id) && profile.apps.length === 1) return;
-    onChange({ ...profile, apps: profile.apps.includes(id) ? profile.apps.filter((app) => app !== id) : [...profile.apps, id] });
+    if (apps.includes(id) && apps.length === 1) return;
+    onChange({ ...profile, apps: apps.includes(id) ? apps.filter((app) => app !== id) : [...apps, id] });
   };
   return (
     <div className="rounded-3xl border border-line bg-panel p-4">
@@ -642,7 +644,7 @@ function DeviceControlCard({
       <button onClick={onPreview} className="mt-3 rounded-xl border border-amber/40 px-3 py-2 text-xs text-amber">View live screen mirror</button>
       <div className="mt-3 flex flex-wrap gap-1.5">
         {PLATFORMS.map((platform) => (
-          <button key={platform.id} onClick={() => toggleApp(platform.id)} className={`rounded-full px-2.5 py-1 text-[10px] ${profile.apps.includes(platform.id) ? "bg-cream text-ink" : "bg-ink text-mist"}`}>
+          <button key={platform.id} onClick={() => toggleApp(platform.id)} className={`rounded-full px-2.5 py-1 text-[10px] ${apps.includes(platform.id) ? "bg-cream text-ink" : "bg-ink text-mist"}`}>
             {platform.name}
           </button>
         ))}
@@ -669,7 +671,7 @@ function DeviceControlCard({
         </div>
       )}
       <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-        <label>Logo seconds · {profile.displayDurationSeconds.toFixed(1)}
+        <label>Logo seconds · {(profile.displayDurationSeconds ?? 4.5).toFixed(1)}
           <input type="range" min={0.5} max={30} step={0.5} value={profile.displayDurationSeconds} onChange={(e) => onChange({ ...profile, displayDurationSeconds: Number(e.target.value) })} className="mt-1 w-full" />
         </label>
         <label>Brightness · {profile.brightness}%
@@ -681,7 +683,7 @@ function DeviceControlCard({
         <Toggle label="Auto brightness" on={profile.adaptiveBrightness} onChange={(adaptiveBrightness) => onChange({ ...profile, adaptiveBrightness })} />
       </div>
       {profile.includeBlank && (
-        <label className="mt-3 block text-xs">Blank seconds · {profile.blankDurationSeconds.toFixed(1)}
+        <label className="mt-3 block text-xs">Blank seconds · {(profile.blankDurationSeconds ?? 1.5).toFixed(1)}
           <input type="range" min={0.5} max={15} step={0.5} value={profile.blankDurationSeconds} onChange={(e) => onChange({ ...profile, blankDurationSeconds: Number(e.target.value) })} className="mt-1 w-full" />
         </label>
       )}
@@ -1062,6 +1064,34 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
    * away. Writes both fields in a single saveSettings patch (the store merges
    * a patch into the settings it already has).
    */
+  /**
+   * Why the rear glass is blank, computed from the settings in front of you.
+   * "Campaign not displaying" is nearly always one of these, so the console
+   * says which one instead of leaving you to guess.
+   */
+  const rearProfile = (settings.deviceProfiles ?? [])
+    .map(normalizeDeviceProfile)
+    .find((profile) => profile.position === "rear" && profile.pairCode === driver?.pairCode && !profile.deviceId) ?? null;
+  const glassStatus = (campaign: CommercialCampaign): { ready: boolean; reasons: string[] } => {
+    const reasons: string[] = [];
+    if (settings.masterOn === false) reasons.push("the console power switch is off");
+    if (!(rearProfile?.commercialEnabled ?? false)) reasons.push("“Commercial playlist” is off in this device’s profile (Live tab)");
+    if (!(rearProfile?.campaignIds ?? []).includes(campaign.id)) reasons.push("not assigned to this device yet (Live tab → campaign chip)");
+    for (const reason of campaignBlockReasons(campaign, {
+      nswSafetyMode: nswSafety,
+      legalPackEnabled: legalPack,
+      position: "rear",
+      parkedConfirmed: rearProfile?.commercialParkedConfirmed,
+    })) {
+      if (reason === "parked-confirmation-missing") reasons.push("“Parked confirmation for campaigns” is off in this device’s profile");
+      else reasons.push(reason);
+    }
+    if ((settings.motionSafetyGate ?? true) && reasons.length === 0) {
+      reasons.push(`motion gate is on: the glass lights after ${settings.stationaryWaitSeconds ?? 60}s parked (Booth → “Display only while stopped” for a desk test)`);
+    }
+    return { ready: reasons.length === 0, reasons };
+  };
+
   const seedDemoCampaign = () => {
     const campaign = buildSeedCampaign(Date.now(), legalPack ? "regulated" : "unregulated");
     const nextCampaigns = [...campaigns.filter((item) => item.id !== campaign.id), campaign];
@@ -1442,7 +1472,16 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
           <button onClick={addCampaign} className="rounded-xl bg-amber px-4 py-2 text-sm font-semibold text-ink">Approve campaign asset</button>
         </div>
         <div className="mt-5 space-y-2">
-          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s · {campaignScheduleLabel(campaign)} · cap {campaign.brightnessCap ?? 100}%{campaign.complianceMode === "unregulated" ? " · UNREGULATED (no legal pack)" : ""}</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
+          {campaigns.map((campaign) => {
+            const status = glassStatus(campaign);
+            return <div key={campaign.id} className="rounded-xl border border-line bg-ink px-3 py-2 text-xs"><div className="flex items-center justify-between gap-3"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s · {campaignScheduleLabel(campaign)} · cap {campaign.brightnessCap ?? 100}%{campaign.complianceMode === "unregulated" ? " · UNREGULATED (no legal pack)" : ""}</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>
+              <p className={`mt-1.5 text-[10px] leading-relaxed ${status.ready ? "text-amber" : "text-mist"}`}>
+                {status.ready
+                  ? "Ready for the rear glass once the display is powered and parked."
+                  : `Not showing yet: ${status.reasons.join(" · ")}`}
+              </p>
+            </div>;
+          })}
         </div>
       </div>
 

@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { StoreProvider, useStore } from "./store";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { normalizeDeviceProfile } from "./lib/devices";
 import { useHash, useNow } from "./hooks";
 import { db } from "./lib/storage";
 import { Landing } from "./components/Landing";
@@ -16,9 +18,11 @@ import { canDownloadSource } from "./lib/access";
 
 export default function App() {
   return (
-    <StoreProvider>
+    <ErrorBoundary>
+      <StoreProvider>
       <Router />
-    </StoreProvider>
+      </StoreProvider>
+    </ErrorBoundary>
   );
 }
 
@@ -188,7 +192,9 @@ function Gate({ children, go }: { children: ReactNode; go: (p: string) => void }
 function PairedDisplay({ code, position = "rear", go, onExit }: { code: string; position?: "rear" | "front"; go: (p: string) => void; onExit?: () => void }) {
   const { driver, powered, activeRide, settings } = useStore();
   const sameBooth = !!driver && (position === "front" ? driver.frontPairCode : driver.pairCode)?.toUpperCase() === code.toUpperCase();
-  const directProfile = sameBooth ? settings.deviceProfiles?.find((profile) => profile.position === position && profile.pairCode === code && !profile.deviceId) : undefined;
+  const directProfile = sameBooth
+    ? settings.deviceProfiles?.map(normalizeDeviceProfile).find((profile) => profile.position === position && profile.pairCode === code && !profile.deviceId)
+    : undefined;
   const positionMaster = position === "front" ? (settings.frontMasterOn ?? true) : (settings.rearMasterOn ?? true);
   return (
     <DisplayScreen
