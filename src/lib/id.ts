@@ -8,7 +8,7 @@
 export function uid(prefix: string): string {
   const timestamp = Date.now().toString(36); // Convert timestamp to base36
   const randomPart = Math.random().toString(36).slice(2, 9); // Random alphanumeric
-  return `${prefix}_${timestamp}${randomPart}`;
+  return `\( {prefix}_ \){timestamp}${randomPart}`;
 }
 
 /**
@@ -23,6 +23,17 @@ export function pairCode(): string {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
+}
+
+/**
+ * Format a pair code for display (adds a space in the middle)
+ * e.g. "A1B2C3" → "A1B 2C3"
+ */
+export function formatPair(code: string | null | undefined): string {
+  if (!code) return "";
+  const cleaned = code.replace(/\s+/g, "").toUpperCase();
+  if (cleaned.length <= 3) return cleaned;
+  return `${cleaned.slice(0, 3)} ${cleaned.slice(3)}`;
 }
 
 /**
