@@ -1,14 +1,18 @@
 export type Language =
-  | "en"
-  | "es"
-  | "fr"
-  | "de"
-  | "pt"
-  | "zh"
-  | "ja"
-  | "ko"
-  | "ar"
-  | "hi";
+  // Major world languages
+  | "en" | "es" | "fr" | "de" | "pt" | "zh" | "ja" | "ko" | "ar" | "hi" | "ur"
+  | "ru" | "it" | "tr" | "nl" | "pl" | "uk" | "vi" | "th" | "id" | "ms"
+  // South Asia
+  | "bn" | "ta" | "te" | "mr" | "gu" | "kn" | "ml" | "pa" | "or" | "si"
+  // Middle East & Central Asia
+  | "fa" | "he" | "ku" | "az" | "kk" | "uz"
+  // Europe
+  | "sv" | "no" | "da" | "fi" | "cs" | "sk" | "hu" | "ro" | "bg" | "el"
+  | "hr" | "sr" | "sl" | "lt" | "lv" | "et"
+  // Africa
+  | "sw" | "am" | "ha" | "yo" | "ig" | "zu" | "xh" | "af"
+  // Southeast Asia & others
+  | "fil" | "my" | "km" | "lo" | "ne" | "ka" | "hy" | "mn";
 
 export interface Labels {
   incoming: string;
@@ -20,6 +24,7 @@ export interface Labels {
 }
 
 const translations: Record<Language, Labels> = {
+  // ─── Major World Languages ───────────────────────────────────────
   en: {
     incoming: "INCOMING RIDE",
     onTheWay: "DRIVER ON THE WAY",
@@ -46,4 +51,544 @@ const translations: Record<Language, Labels> = {
   },
   de: {
     incoming: "EINGEHENDE FAHRT",
-    onTheWay:
+    onTheWay: "FAHRER UNTERWEGS",
+    arriving: "BALD ANKUNFT",
+    yourRide: "IHRE FAHRT",
+    inTrip: "WÄHREND DER FAHRT",
+    thanks: "DANKE",
+  },
+  pt: {
+    incoming: "CORRIDA RECEBIDA",
+    onTheWay: "MOTORISTA A CAMINHO",
+    arriving: "CHEGANDO EM BREVE",
+    yourRide: "SUA CORRIDA",
+    inTrip: "EM VIAGEM",
+    thanks: "OBRIGADO",
+  },
+  zh: {
+    incoming: "来单",
+    onTheWay: "司机在路上",
+    arriving: "即将到达",
+    yourRide: "您的行程",
+    inTrip: "行程中",
+    thanks: "谢谢",
+  },
+  ja: {
+    incoming: "乗車依頼",
+    onTheWay: "運転手走行中",
+    arriving: "まもなく到着",
+    yourRide: "ご乗車",
+    inTrip: "乗車中",
+    thanks: "ありがとう",
+  },
+  ko: {
+    incoming: "새 요청",
+    onTheWay: "운전자 이동 중",
+    arriving: "곧 도착",
+    yourRide: "귀하의 탈것",
+    inTrip: "탈것 중",
+    thanks: "감사합니다",
+  },
+  ar: {
+    incoming: "طلب قادم",
+    onTheWay: "السائق في الطريق",
+    arriving: "قريب الوصول",
+    yourRide: "رحلتك",
+    inTrip: "أثناء الرحلة",
+    thanks: "شكرا",
+  },
+  hi: {
+    incoming: "आने वाली सवारी",
+    onTheWay: "ड्राइवर रास्ते में",
+    arriving: "शीघ्र ही आ रहा है",
+    yourRide: "आपकी सवारी",
+    inTrip: "यात्रा में",
+    thanks: "धन्यवाद",
+  },
+  ur: {
+    incoming: "آنے والی سواری",
+    onTheWay: "ڈرائیور راستے میں",
+    arriving: "جلد آرہا ہے",
+    yourRide: "آپ کی سواری",
+    inTrip: "سفر میں",
+    thanks: "شکریہ",
+  },
+  ru: {
+    incoming: "ВХОДЯЩИЙ ЗАКАЗ",
+    onTheWay: "ВОДИТЕЛЬ В ПУТИ",
+    arriving: "СКОРО ПРИБУДЕТ",
+    yourRide: "ВАША ПОЕЗДКА",
+    inTrip: "В ПУТИ",
+    thanks: "СПАСИБО",
+  },
+  it: {
+    incoming: "CORSA IN ENTRATA",
+    onTheWay: "AUTISTA IN ARRIVO",
+    arriving: "ARRIVO A BREVE",
+    yourRide: "LA TUA CORSA",
+    inTrip: "IN VIAGGIO",
+    thanks: "GRAZIE",
+  },
+  tr: {
+    incoming: "GELEN YOLCULUK",
+    onTheWay: "SÜRÜCÜ YOLDA",
+    arriving: "YAKINDA VARACAK",
+    yourRide: "YOLCULUĞUNUZ",
+    inTrip: "YOLCULUKTA",
+    thanks: "TEŞEKKÜRLER",
+  },
+  nl: {
+    incoming: "INKOMENDE RIT",
+    onTheWay: "CHAUFFEUR ONDERWEG",
+    arriving: "BINNENKORT AAN",
+    yourRide: "JOUW RIT",
+    inTrip: "ONDERWEG",
+    thanks: "BEDANKT",
+  },
+  pl: {
+    incoming: "NADCHODZĄCY KURS",
+    onTheWay: "KIEROWCA W DRODZE",
+    arriving: "WKRÓTCE PRZYJEDZIE",
+    yourRide: "TWOJA PODRÓŻ",
+    inTrip: "W PODRÓŻY",
+    thanks: "DZIĘKUJĘ",
+  },
+  uk: {
+    incoming: "ВХІДНЕ ЗАМОВЛЕННЯ",
+    onTheWay: "ВОДІЙ У ДОРОЗІ",
+    arriving: "НЕЗАБАРОМ ПРИБУДЕ",
+    yourRide: "ВАША ПОЇЗДКА",
+    inTrip: "В ПОЇЗДЦІ",
+    thanks: "ДЯКУЮ",
+  },
+  vi: {
+    incoming: "CHUYẾN ĐẾN",
+    onTheWay: "TÀI XẾ ĐANG ĐẾN",
+    arriving: "SẮP ĐẾN",
+    yourRide: "CHUYẾN CỦA BẠN",
+    inTrip: "ĐANG ĐI",
+    thanks: "CẢM ƠN",
+  },
+  th: {
+    incoming: "งานเข้า",
+    onTheWay: "คนขับกำลังมา",
+    arriving: "ใกล้ถึงแล้ว",
+    yourRide: "การเดินทางของคุณ",
+    inTrip: "ระหว่างทาง",
+    thanks: "ขอบคุณ",
+  },
+  id: {
+    incoming: "PESANAN MASUK",
+    onTheWay: "PENGEMUDI DALAM PERJALANAN",
+    arriving: "SEGERA TIBA",
+    yourRide: "PERJALANAN ANDA",
+    inTrip: "DALAM PERJALANAN",
+    thanks: "TERIMA KASIH",
+  },
+  ms: {
+    incoming: "PESANAN MASUK",
+    onTheWay: "PEMANDU SEDANG DALAM PERJALANAN",
+    arriving: "SEGERA TIBA",
+    yourRide: "PERJALANAN ANDA",
+    inTrip: "DALAM PERJALANAN",
+    thanks: "TERIMA KASIH",
+  },
+
+  // ─── South Asia ──────────────────────────────────────────────────
+  bn: {
+    incoming: "আসন্ন রাইড",
+    onTheWay: "ড্রাইভার পথে আছে",
+    arriving: "শীঘ্রই আসছে",
+    yourRide: "আপনার রাইড",
+    inTrip: "যাত্রায়",
+    thanks: "ধন্যবাদ",
+  },
+  ta: {
+    incoming: "வரும் சவாரி",
+    onTheWay: "டிரைவர் வழியில்",
+    arriving: "விரைவில் வருகிறார்",
+    yourRide: "உங்கள் சவாரி",
+    inTrip: "பயணத்தில்",
+    thanks: "நன்றி",
+  },
+  te: {
+    incoming: "వచ్చే రైడ్",
+    onTheWay: "డ్రైవర్ మార్గంలో",
+    arriving: "త్వరలో వస్తున్నారు",
+    yourRide: "మీ రైడ్",
+    inTrip: "ప్రయాణంలో",
+    thanks: "ధన్యవాదాలు",
+  },
+  mr: {
+    incoming: "येणारी सवारी",
+    onTheWay: "ड्रायव्हर रस्त्यात आहे",
+    arriving: "लवकरच येत आहे",
+    yourRide: "तुमची सवारी",
+    inTrip: "प्रवासात",
+    thanks: "धन्यवाद",
+  },
+  gu: {
+    incoming: "આવનારી સવારી",
+    onTheWay: "ડ્રાઈવર રસ્તામાં છે",
+    arriving: "જલ્દી આવી રહ્યા છે",
+    yourRide: "તમારી સવારી",
+    inTrip: "પ્રવાસમાં",
+    thanks: "આભાર",
+  },
+  kn: {
+    incoming: "ಬರುವ ಸವಾರಿ",
+    onTheWay: "ಚಾಲಕ ದಾರಿಯಲ್ಲಿದ್ದಾರೆ",
+    arriving: "ಶೀಘ್ರದಲ್ಲೇ ಬರುತ್ತಾರೆ",
+    yourRide: "ನಿಮ್ಮ ಸವಾರಿ",
+    inTrip: "ಪ್ರಯಾಣದಲ್ಲಿ",
+    thanks: "ಧನ್ಯವಾದಗಳು",
+  },
+  ml: {
+    incoming: "വരുന്ന യാത്ര",
+    onTheWay: "ഡ്രൈവർ വഴിയിലാണ്",
+    arriving: "ഉടൻ എത്തും",
+    yourRide: "നിങ്ങളുടെ യാത്ര",
+    inTrip: "യാത്രയിൽ",
+    thanks: "നന്ദി",
+  },
+  pa: {
+    incoming: "ਆਉਣ ਵਾਲੀ ਸਵਾਰੀ",
+    onTheWay: "ਡਰਾਈਵਰ ਰਸਤੇ ਵਿੱਚ ਹੈ",
+    arriving: "ਜਲਦੀ ਆ ਰਿਹਾ ਹੈ",
+    yourRide: "ਤੁਹਾਡੀ ਸਵਾਰੀ",
+    inTrip: "ਸਫ਼ਰ ਵਿੱਚ",
+    thanks: "ਧੰਨਵਾਦ",
+  },
+  or: {
+    incoming: "ଆସୁଥିବା ରାଇଡ୍",
+    onTheWay: "ଡ୍ରାଇଭର୍ ରାସ୍ତାରେ ଅଛନ୍ତି",
+    arriving: "ଶୀଘ୍ର ଆସୁଛନ୍ତି",
+    yourRide: "ଆପଣଙ୍କ ରାଇଡ୍",
+    inTrip: "ଯାତ୍ରାରେ",
+    thanks: "ଧନ୍ୟବାଦ",
+  },
+  si: {
+    incoming: "පැමිණෙන ගමන",
+    onTheWay: "රියදුරු මාර්ගයේ",
+    arriving: "ඉක්මනින් පැමිණේ",
+    yourRide: "ඔබේ ගමන",
+    inTrip: "ගමනේ",
+    thanks: "ස්තූතියි",
+  },
+
+  // ─── Middle East & Central Asia ──────────────────────────────────
+  fa: {
+    incoming: "درخواست ورودی",
+    onTheWay: "راننده در راه است",
+    arriving: "به زودی می‌رسد",
+    yourRide: "سفر شما",
+    inTrip: "در سفر",
+    thanks: "متشکرم",
+  },
+  he: {
+    incoming: "נסיעה נכנסת",
+    onTheWay: "הנהג בדרך",
+    arriving: "מגיע בקרוב",
+    yourRide: "הנסיעה שלך",
+    inTrip: "בנסיעה",
+    thanks: "תודה",
+  },
+  ku: {
+    incoming: "داواکاری هاتî",
+    onTheWay: "şofêr li rê ye",
+    arriving: "zû digihêje",
+    yourRide: "rêwîtiya te",
+    inTrip: "di rêwîtiyê de",
+    thanks: "spas",
+  },
+  az: {
+    incoming: "GƏLƏN SİFARİŞ",
+    onTheWay: "SÜRÜCÜ YOLDADIR",
+    arriving: "TEZLİKLƏ GƏLİR",
+    yourRide: "SİZİN SƏFƏRİNİZ",
+    inTrip: "SƏFƏRDƏ",
+    thanks: "TƏŞƏKKÜR",
+  },
+  kk: {
+    incoming: "КЕЛЕТІН ТАПСЫРЫС",
+    onTheWay: "ЖҮРГІЗУШІ ЖОЛДА",
+    arriving: "ЖАҚЫНДА КЕЛЕДІ",
+    yourRide: "СІЗДІҢ САПАРЫҢЫЗ",
+    inTrip: "САПАРДА",
+    thanks: "РАХМЕТ",
+  },
+  uz: {
+    incoming: "KELAYOTGAN BUYURTMA",
+    onTheWay: "HAYDOVCHI YO'LDA",
+    arriving: "TEZ ORADA KELADI",
+    yourRide: "SAFARINGIZ",
+    inTrip: "SAFARDA",
+    thanks: "RAHMAT",
+  },
+
+  // ─── Europe ──────────────────────────────────────────────────────
+  sv: {
+    incoming: "INKOMMANDE RESA",
+    onTheWay: "FÖRAR PÅ VÄG",
+    arriving: "ANLÄNDER SNART",
+    yourRide: "DIN RESA",
+    inTrip: "UNDER RESAN",
+    thanks: "TACK",
+  },
+  no: {
+    incoming: "INNKOMMENDE TUR",
+    onTheWay: "SJÅFØR PÅ VEI",
+    arriving: "ANKOMMER SNART",
+    yourRide: "DIN TUR",
+    inTrip: "UNDER TUR",
+    thanks: "TAKK",
+  },
+  da: {
+    incoming: "INDKOMMENDE TUR",
+    onTheWay: "CHAUFFØR PÅ VEJ",
+    arriving: "ANKOMMER SNART",
+    yourRide: "DIN TUR",
+    inTrip: "UNDER TUR",
+    thanks: "TAK",
+  },
+  fi: {
+    incoming: "SAAPUVA MATKA",
+    onTheWay: "KULJETTAJA MATKALLA",
+    arriving: "SAAPUU PIAN",
+    yourRide: "MATKASI",
+    inTrip: "MATKALLA",
+    thanks: "KIITOS",
+  },
+  cs: {
+    incoming: "PŘÍCHOZÍ JÍZDA",
+    onTheWay: "ŘIDIČ NA CESTĚ",
+    arriving: "BRZY PŘIJEDĚ",
+    yourRide: "VAŠE JÍZDA",
+    inTrip: "NA CESTĚ",
+    thanks: "DĚKUJI",
+  },
+  sk: {
+    incoming: "PRICHÁDZAJÚCA JAZDA",
+    onTheWay: "VODIČ NA CESTE",
+    arriving: "ČOSKORO PRÍDE",
+    yourRide: "VAŠA JAZDA",
+    inTrip: "NA CESTE",
+    thanks: "ĎAKUJEM",
+  },
+  hu: {
+    incoming: "BEÉRKEZŐ FUVAR",
+    onTheWay: "SOFŐR ÚTON",
+    arriving: "HAMAROSAN ÉRKEZIK",
+    yourRide: "AZ ÖN FUVARJA",
+    inTrip: "ÚTON",
+    thanks: "KÖSZÖNÖM",
+  },
+  ro: {
+    incoming: "CURSĂ PRIMĂ",
+    onTheWay: "ȘOFER ÎN DRUM",
+    arriving: "SOSIRE CURÂND",
+    yourRide: "CURSA TA",
+    inTrip: "ÎN CURSĂ",
+    thanks: "MULȚUMESC",
+  },
+  bg: {
+    incoming: "ВХОДЯЩА ПОРЪЧКА",
+    onTheWay: "ШОФЬОР НА ПЪТ",
+    arriving: "СКОРО ПРИСТИГА",
+    yourRide: "ВАШЕТО ПЪТУВАНЕ",
+    inTrip: "В ПЪТ",
+    thanks: "БЛАГОДАРЯ",
+  },
+  el: {
+    incoming: "ΕΙΣΕΡΧΟΜΕΝΗ ΔΙΑΔΡΟΜΗ",
+    onTheWay: "ΟΔΗΓΟΣ ΚΑΘ' ΟΔΟΝ",
+    arriving: "ΦΤΑΝΕΙ ΣΥΝΤΟΜΑ",
+    yourRide: "Η ΔΙΑΔΡΟΜΗ ΣΑΣ",
+    inTrip: "ΣΕ ΔΙΑΔΡΟΜΗ",
+    thanks: "ΕΥΧΑΡΙΣΤΩ",
+  },
+  hr: {
+    incoming: "DOLAZNA VOŽNJA",
+    onTheWay: "VOZAČ NA PUTU",
+    arriving: "STIŽE USKORO",
+    yourRide: "VAŠA VOŽNJA",
+    inTrip: "NA PUTU",
+    thanks: "HVALA",
+  },
+  sr: {
+    incoming: "ДОЛАЗЕЋА ВОЖЊА",
+    onTheWay: "ВОЗАЧ НА ПУТУ",
+    arriving: "СТИЖЕ УСКОРО",
+    yourRide: "ВАША ВОЖЊА",
+    inTrip: "НА ПУТУ",
+    thanks: "ХВАЛА",
+  },
+  sl: {
+    incoming: "PRIHAJAJOČA VOŽNJA",
+    onTheWay: "VOZNIK NA POTI",
+    arriving: "KMALU PRIDE",
+    yourRide: "VAŠA VOŽNJA",
+    inTrip: "NA POTI",
+    thanks: "HVALA",
+  },
+  lt: {
+    incoming: "ATEINANTI KELIONĖ",
+    onTheWay: "VAIRUOTOJAS KELYJE",
+    arriving: "NETRUKUS ATVYKSTA",
+    yourRide: "JŪSŲ KELIONĖ",
+    inTrip: "KELIONĖJE",
+    thanks: "AČIŪ",
+  },
+  lv: {
+    incoming: "IENĀKOŠAIS BRAUCIENS",
+    onTheWay: "ŠOFERIS CEĻĀ",
+    arriving: "DRĪZ IERADĪSIES",
+    yourRide: "JŪSU BRAUCIENS",
+    inTrip: "CEĻĀ",
+    thanks: "PATEICOS",
+  },
+  et: {
+    incoming: "SAABUV SÕIT",
+    onTheWay: "JUHT TEEL",
+    arriving: "VARSTI JÕUAB",
+    yourRide: "TEIE SÕIT",
+    inTrip: "TEEL",
+    thanks: "AITÄH",
+  },
+
+  // ─── Africa ──────────────────────────────────────────────────────
+  sw: {
+    incoming: "SAFARI INAYOINGIA",
+    onTheWay: "DEREVA NJIANI",
+    arriving: "ANAKARIBIA",
+    yourRide: "SAFARI YAKO",
+    inTrip: "KATIKA SAFARI",
+    thanks: "ASANTE",
+  },
+  am: {
+    incoming: "ገቢ ጉዞ",
+    onTheWay: "ሹፌር በመንገድ ላይ",
+    arriving: "በቅርቡ ይደርሳል",
+    yourRide: "የእርስዎ ጉዞ",
+    inTrip: "በጉዞ ላይ",
+    thanks: "አመሰግናለሁ",
+  },
+  ha: {
+    incoming: "SAFARI MAI SHIGA",
+    onTheWay: "DIREBA A HANYA",
+    arriving: "YANA ZUWA NAN BA DA DADEWA BA",
+    yourRide: "SAFARINKA",
+    inTrip: "A CIKIN SAFARI",
+    thanks: "NA GODE",
+  },
+  yo: {
+    incoming: "IRIN-AJO TO N BO",
+    onTheWay: "AWAKO N LO",
+    arriving: "YO DE LAIPE",
+    yourRide: "IRIN-AJO RE",
+    inTrip: "NINU IRIN-AJO",
+    thanks: "E SE",
+  },
+  ig: {
+    incoming: "NJEM NA-ABATA",
+    onTheWay: "ỌKWỌ ỤGBỌ N'ỤZỌ",
+    arriving: "NA-ABỊA NGWA NGWA",
+    yourRide: "NJEM GỊ",
+    inTrip: "N'IME NJEM",
+    thanks: "DAALỤ",
+  },
+  zu: {
+    incoming: "UHAMBO OLUNGENAYO",
+    onTheWay: "UMSHAYELI USENDLELENI",
+    arriving: "UYEZA MADUZE",
+    yourRide: "UHAMBO LWAKHO",
+    inTrip: "OHAMBWE",
+    thanks: "NGIYABONGA",
+  },
+  xh: {
+    incoming: "UHAMBO OLUNGENAYO",
+    onTheWay: "UMQHUBI USENDLELENI",
+    arriving: "UYEZA KAMSINYA",
+    yourRide: "UHAMBO LWAKHO",
+    inTrip: "KUHAMBO",
+    thanks: "ENKOSI",
+  },
+  af: {
+    incoming: "INKOMENDE RIT",
+    onTheWay: "BESTUURDER ONDERWEG",
+    arriving: "KOM BINNEKORT AAN",
+    yourRide: "JOU RIT",
+    inTrip: "OP RIT",
+    thanks: "DANKIE",
+  },
+
+  // ─── Southeast Asia & others ─────────────────────────────────────
+  fil: {
+    incoming: "PAPASOK NA BIYAHE",
+    onTheWay: "DRIVER ON THE WAY",
+    arriving: "MALAPIT NANG DUMATING",
+    yourRide: "ANG IYONG BIYAHE",
+    inTrip: "SA BIYAHE",
+    thanks: "SALAMAT",
+  },
+  my: {
+    incoming: "ဝင်လာသော ခရီး",
+    onTheWay: "ယာဉ်မောင်း လမ်းပေါ်တွင်",
+    arriving: "မကြာမီ ရောက်ရှိမည်",
+    yourRide: "သင်၏ ခရီး",
+    inTrip: "ခရီးတွင်",
+    thanks: "ကျေးဇူးတင်ပါတယ်",
+  },
+  km: {
+    incoming: "ការធ្វើដំណើរចូល",
+    onTheWay: "អ្នកបើកបរកំពុងមក",
+    arriving: "នឹងមកដល់ឆាប់ៗ",
+    yourRide: "ការធ្វើដំណើររបស់អ្នក",
+    inTrip: "ក្នុងការធ្វើដំណើរ",
+    thanks: "អរគុណ",
+  },
+  lo: {
+    incoming: "ການເດີນທາງເຂົ້າ",
+    onTheWay: "ຄົນຂັບກຳລັງມາ",
+    arriving: "ຈະມາຮອດໄວໆນີ້",
+    yourRide: "ການເດີນທາງຂອງທ່ານ",
+    inTrip: "ໃນການເດີນທາງ",
+    thanks: "ຂອບໃຈ",
+  },
+  ne: {
+    incoming: "आउँदै गरेको यात्रा",
+    onTheWay: "चालक बाटोमा छन्",
+    arriving: "चाँडै आउँदैछन्",
+    yourRide: "तपाईंको यात्रा",
+    inTrip: "यात्रामा",
+    thanks: "धन्यवाद",
+  },
+  ka: {
+    incoming: "შემოსული მგზავრობა",
+    onTheWay: "მძღოლი გზაშია",
+    arriving: "მალე მოვა",
+    yourRide: "თქვენი მგზავრობა",
+    inTrip: "მგზავრობაში",
+    thanks: "მადლობა",
+  },
+  hy: {
+    incoming: "ՄՈՒՏՔԱՅԻՆ ՈՒՂԵՎՈՐՈՒԹՅՈՒՆ",
+    onTheWay: "ՎԱՐՈՐԴԸ ՃԱՆԱՊԱՐՀԻՆ Է",
+    arriving: "ՇՈՒՏՈՎ ԿԳԱ",
+    yourRide: "ՁԵՐ ՈՒՂԵՎՈՐՈՒԹՅՈՒՆԸ",
+    inTrip: "ՈՒՂԵՎՈՐՈՒԹՅԱՆ ՄԵՋ",
+    thanks: "ՇՆՈՐՀԱԿԱԼՈՒԹՅՈՒՆ",
+  },
+  mn: {
+    incoming: "ИРЖ БУЙ АЯЛАЛ",
+    onTheWay: "ЖОЛООЧ ЗАМД БАЙНА",
+    arriving: "УДАХГҮЙ ИРНЭ",
+    yourRide: "ТАНЫ АЯЛАЛ",
+    inTrip: "АЯЛАЛД",
+    thanks: "БАЯРЛАЛАА",
+  },
+};
+
+export function t(language: Language = "en"): Labels {
+  return translations[language] ?? translations.en;
+}
