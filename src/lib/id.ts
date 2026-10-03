@@ -8,7 +8,7 @@
 export function uid(prefix: string): string {
   const timestamp = Date.now().toString(36); // Convert timestamp to base36
   const randomPart = Math.random().toString(36).slice(2, 9); // Random alphanumeric
-  return `\( {prefix}_ \){timestamp}${randomPart}`;
+  return `${prefix}_${timestamp}${randomPart}`;
 }
 
 /**
@@ -52,4 +52,46 @@ export function isValidPairCode(code: string): boolean {
  */
 export function verificationCode(): string {
   return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+/* ------------------------------------------------------------------ *
+ * Sync identities — phone (host) ↔ tablet (display)
+ * ------------------------------------------------------------------ */
+
+export type SyncRole = "host" | "display";
+
+/**
+ * Normalise a pair code for use inside a peer id / channel name.
+ */
+export function normalizePairCode(code: string | null | undefined): string {
+  return (code ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+/**
+ * Deterministic PeerJS peer id for a given pair code and role.
+ *
+ * Deterministic on purpose: the phone needs to know up-front which peer id
+ * to dial, otherwise it can only guess (the previous implementation built a
+ * wildcard target that was never used and could never match a real peer).
+ *
+ * host    → retroflex-7K2M9Q-host
+ * display → retroflex-7K2M9Q-display
+ */
+export function peerId(role: SyncRole, code: string): string {
+  return `retroflex-${normalizePairCode(code)}-${role}`;
+}
+
+/**
+ * Unique packet id used for ack tracking.
+ * Format: pkt_<base36 timestamp>_<random>
+ */
+export function packetId(): string {
+  return `pkt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Console tag for a pair channel, e.g. "[Retroflex 7K2M9Q/host]".
+ */
+export function relayTag(code: string | null | undefined, role: string): string {
+  return `[Retroflex ${normalizePairCode(code)}/${role}]`;
 }

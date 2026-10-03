@@ -5,7 +5,6 @@ import { DisplayScreen } from "./DisplayScreen";
 import { Logo } from "./Logo";
 import { PLATFORMS } from "../lib/platforms";
 import { usePairChannel } from "../lib/sync";
-import type { Platform } from "../types";
 
 export function ReviewLab({ go }: { go: (p: string) => void }) {
   const { ready, driver, bootDemo, powered, setPowered, settings, saveSettings, updateDriver } = useStore();
@@ -34,7 +33,7 @@ export function ReviewLab({ go }: { go: (p: string) => void }) {
     });
   }, [driver?.pairCode, driver?.platforms, powered, settings, apps]);
 
-  const togglePlatform = (platform: Platform) => {
+  const togglePlatform = (platform: string) => {
     if (!driver) return;
     const selected = driver.platforms.includes(platform);
     if (selected && driver.platforms.length === 1) return;
@@ -229,7 +228,7 @@ function PhoneMock({
   setPowered: (on: boolean) => void;
   pair: string;
   apps: Array<(typeof PLATFORMS)[number]>;
-  onToggle: (platform: Platform) => void;
+  onToggle: (platform: string) => void;
 }) {
   return (
     <div className="rounded-[1.7rem] bg-ink px-3 py-4 text-cream">

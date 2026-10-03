@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# generated at build time by the zip plugin
+public/Rideshare-Retroflectivapp.zip
+
+# env
+.env
+.env.local
+.env.*.local
+
+# logs / editors / OS
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test output
+coverage/

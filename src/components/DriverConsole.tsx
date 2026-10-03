@@ -17,10 +17,11 @@ import { formatPair } from "../lib/id";
 import { useFleetChannels } from "../lib/sync";
 import { kph, useMotion } from "../lib/motion";
 import { Check } from "lucide-react";
-import type { CommercialCampaign, CommercialCampaignLegal, DeviceProfile, DeviceTelemetry, DisplaySettings, LegalConsent, TabletBattery, TabletDevice } from "../types";
+import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DeviceProfile, DeviceTelemetry, DisplaySettings, DriverRole, LegalConsent, TabletBattery, TabletDevice } from "../types";
 import { codeProfileId, createDeviceProfile, deviceProfileId, profileForDevice } from "../lib/devices";
 import { canDownloadSource, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
-import { createConsentPdf, deliverAgreementPdf, type AgreementRole } from "../lib/agreements";
+import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
+import { campaignDraftIssues, campaignScheduleLabel } from "../lib/signage";
 import { Logo } from "./Logo";
 import { DisplayScreen } from "./DisplayScreen";
 import { useNow } from "../hooks";
@@ -206,7 +207,16 @@ export function DriverConsole({ go }: { go: (p: string) => void }) {
   useEffect(() => {
     if (!driver) return;
     Object.values(connectedDevices).forEach((device) => {
-      const profile = profileForDevice(deviceProfiles, device, device.pairCode, device.position);
+      const profile =
+        profileForDevice(deviceProfiles, device, device.pairCode, device.position) ??
+        createDeviceProfile({
+          id: deviceProfileId(device.id, device.position),
+          pairCode: device.pairCode,
+          position: device.position,
+          deviceId: device.id,
+          label: device.name,
+          apps: settings.apps ?? [],
+        });
       publishTo(device.pairCode, {
         type: "settings",
         targetDeviceId: device.id,
@@ -261,7 +271,16 @@ export function DriverConsole({ go }: { go: (p: string) => void }) {
         };
       });
       Object.values(connectedDevices).forEach((device) => {
-        const profile = profileForDevice(deviceProfiles, device, device.pairCode, device.position);
+        const profile =
+        profileForDevice(deviceProfiles, device, device.pairCode, device.position) ??
+        createDeviceProfile({
+          id: deviceProfileId(device.id, device.position),
+          pairCode: device.pairCode,
+          position: device.position,
+          deviceId: device.id,
+          label: device.name,
+          apps: settings.apps ?? [],
+        });
         publishTo(device.pairCode, {
           type: "settings",
           targetDeviceId: device.id,
@@ -358,7 +377,7 @@ function LiveTab({
   profiles: DeviceProfile[];
   onProfileChange: (profile: DeviceProfile) => void;
   alert: string | null;
-  role: "admin" | "supervisor" | "driver";
+  role: DriverRole;
 }) {
   const { driver, saveSettings } = useStore();
   const allowCommercial = isSourceOwner(driver?.email);
@@ -437,7 +456,7 @@ function LiveTab({
           <div>
             <p className="text-[10px] tracking-[0.22em] text-mist">MOTION SAFETY GATE</p>
             <p className="mt-1 text-sm text-cream">
-              {!motionGate ? "Disabled · platform may display while moving" : !motion.allowed ? "Location permission required · rear stays blank" : !motion.isStationary ? `Moving ${kph(motion.speedMps)} km/h · rear stays blank` : secondsLeft > 0 ? `Stopped · display unlocks in ${secondsLeft}s` : "Stopped long enough · rear display allowed"}
+              {!motionGate ? "Disabled · platform may display while moving" : !motion.allowed ? "Location permission required · rear stays blank" : !motion.isStationary ? `Moving ${kph(motion.speedMps ?? 0)} km/h · rear stays blank` : secondsLeft > 0 ? `Stopped · display unlocks in ${secondsLeft}s` : "Stopped long enough · rear display allowed"}
             </p>
           </div>
           <span className={`rounded-full px-2 py-1 text-[10px] tracking-widest ${safeToDisplay ? "bg-amber text-ink" : "bg-ink text-mist"}`}>{safeToDisplay ? "DISPLAY READY" : "BLANK"}</span>
@@ -594,7 +613,7 @@ function DeviceControlCard({
   onPreview: () => void;
   onChange: (profile: DeviceProfile) => void;
 }) {
-  const toggleApp = (id: import("../types").Platform) => {
+  const toggleApp = (id: string) => {
     if (profile.apps.includes(id) && profile.apps.length === 1) return;
     onChange({ ...profile, apps: profile.apps.includes(id) ? profile.apps.filter((app) => app !== id) : [...profile.apps, id] });
   };
@@ -740,7 +759,7 @@ function HistoryTab({
 }: {
   rides: import("../types").Ride[];
   logs: import("../types").ActivityLog[];
-  role: "admin" | "supervisor" | "driver";
+  role: DriverRole;
 }) {
   const done = useMemo(() => rides.filter((r) => r.status === "complete" || r.completedAt), [rides]);
   return (
@@ -980,6 +999,12 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
   const [discountText, setDiscountText] = useState("");
   const [referralCode, setReferralCode] = useState("");
   const [campaignTarget, setCampaignTarget] = useState<"both" | "rear" | "front">("both");
+  // Phase 1 plan fields: approved remote asset, landing URL, schedule window, brightness cap.
+  const [assetUrl, setAssetUrl] = useState("");
+  const [landingUrl, setLandingUrl] = useState("");
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
+  const [brightnessCap, setBrightnessCap] = useState(100);
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [qaTarget, setQaTarget] = useState(settings.enterpriseQa?.targetDevices ?? 100000);
   const [qaDurationSeconds, setQaDurationSeconds] = useState(settings.enterpriseQa?.runDurationSeconds ?? 45);
@@ -1004,13 +1029,13 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
     }));
   };
 
-  const issueConsent = async (role: AgreementRole) => {
+  const issueConsent = async (role: ConsentRole) => {
     if (!title.trim()) {
       setCampaignError("Enter a campaign title before issuing an agreement PDF.");
       return;
     }
     const consent = legal[role];
-    if (!consent.signerName.trim() || !consent.email.trim() || !consent.agreementReference.trim()) {
+    if (!consent.signerName.trim() || !(consent.email ?? "").trim() || !consent.agreementReference.trim()) {
       setCampaignError("Each signed consent needs the legal signer name, email, and written agreement reference.");
       return;
     }
@@ -1076,11 +1101,31 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
       setCampaignError(issues[0]);
       return;
     }
+    const draftIssues = campaignDraftIssues({
+      title,
+      assetDataUrl,
+      assetUrl,
+      landingUrl,
+      startAt: startAt ? new Date(startAt).getTime() : undefined,
+      endAt: endAt ? new Date(endAt).getTime() : undefined,
+      brightnessCap,
+      mediaType,
+      nswSafetyMode: nswSafety,
+    });
+    if (draftIssues.length) {
+      setCampaignError(draftIssues[0]);
+      return;
+    }
     const campaign: CommercialCampaign = {
       id: `cmp_${Date.now().toString(36)}`,
       title: title.trim(),
       mediaType,
-      assetDataUrl,
+      assetDataUrl: assetDataUrl || undefined,
+      assetUrl: assetUrl.trim() || undefined,
+      landingUrl: landingUrl.trim() || undefined,
+      startAt: startAt ? new Date(startAt).getTime() : undefined,
+      endAt: endAt ? new Date(endAt).getTime() : undefined,
+      brightnessCap: brightnessCap < 100 ? brightnessCap : undefined,
       discountText: nswSafety ? undefined : discountText.trim() || undefined,
       referralCode: nswSafety ? undefined : referralCode.trim() || undefined,
       displaySeconds: nswSafety ? Math.max(10, displaySeconds) : Math.max(0.5, displaySeconds),
@@ -1209,6 +1254,14 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
           </div>
           {!nswSafety && <div className="grid grid-cols-2 gap-2"><input value={discountText} onChange={(event) => setDiscountText(event.target.value)} placeholder="Discount text" className="rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" /><input value={referralCode} onChange={(event) => setReferralCode(event.target.value)} placeholder="Referral code" className="rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" /></div>}
           <label className="block text-xs">Campaign dwell · {displaySeconds.toFixed(1)} sec<input type="range" min={nswSafety ? 10 : 0.5} max={60} step={0.5} value={displaySeconds} onChange={(event) => setDisplaySeconds(Number(event.target.value))} className="mt-2 w-full" /></label>
+          {nswSafety && <p className="text-[10px] text-mist">NSW Safety Mode raises dwell to a 10s minimum (25s at 80 km/h or above).</p>}
+          <input value={assetUrl} onChange={(event) => setAssetUrl(event.target.value)} placeholder="Approved asset URL (https:// or leave blank for the uploaded file)" className="w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" />
+          <input value={landingUrl} onChange={(event) => setLandingUrl(event.target.value)} placeholder="Landing URL for the offer (https://...)" className="w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-amber" />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-[10px] text-mist">Starts (optional)<input type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} className="mt-1 w-full rounded-xl border border-line bg-ink px-3 py-2 text-xs text-cream outline-none focus:border-amber" /></label>
+            <label className="block text-[10px] text-mist">Ends (optional)<input type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} className="mt-1 w-full rounded-xl border border-line bg-ink px-3 py-2 text-xs text-cream outline-none focus:border-amber" /></label>
+          </div>
+          <label className="block text-xs">Brightness cap · {brightnessCap}%<input type="range" min={18} max={100} step={1} value={brightnessCap} onChange={(event) => setBrightnessCap(Number(event.target.value))} className="mt-2 w-full" /></label>
           <div className="rounded-2xl border border-amber/30 bg-amber/10 p-3 text-xs leading-relaxed text-mist">
             <p className="font-medium text-cream">Written permission register</p>
             <p className="mt-1">Record the signed agreement reference and signer for the app owner, driver, display vehicle owner, campaign company/agency, trademark authorization and safety assessment. A physical sticker or possession of a logo is not automatically a trademark/display licence; record explicit authorization from the rights holder.</p>
@@ -1251,7 +1304,7 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
           <button onClick={addCampaign} className="rounded-xl bg-amber px-4 py-2 text-sm font-semibold text-ink">Approve campaign asset</button>
         </div>
         <div className="mt-5 space-y-2">
-          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
+          {campaigns.map((campaign) => <div key={campaign.id} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-ink px-3 py-2 text-xs"><span className="min-w-0 truncate text-cream">{campaign.title} · {campaign.target ?? "both"} · {campaign.mediaType} · {campaign.displaySeconds}s · {campaignScheduleLabel(campaign)} · cap {campaign.brightnessCap ?? 100}%</span><button onClick={() => saveSettings({ commercialCampaigns: campaigns.filter((item) => item.id !== campaign.id) })} className="text-mist hover:text-cream">Remove</button></div>)}
         </div>
       </div>
 
@@ -1334,11 +1387,11 @@ function campaignLegalIssues(legal: CommercialCampaignLegal, requiresOfferTerms:
     ["NSW/site safety assessment", legal.safetyAssessment],
   ] as const;
   for (const [label, consent] of named) {
-    if (!consent.confirmed || !consent.signerName.trim() || !consent.email.trim() || !consent.agreementReference.trim()) {
+    if (!consent.confirmed || !consent.signerName.trim() || !(consent.email ?? "").trim() || !consent.agreementReference.trim()) {
       return [`Record a signed ${label} with signer and agreement reference before approving this campaign.`];
     }
   }
-  if (requiresOfferTerms && (!legal.merchantName.trim() || !legal.offerExpiry || !legal.privacyPolicyUrl || !legal.qrTermsConfirmed || !legal.noRiderDataWithoutConsent)) {
+  if (requiresOfferTerms && (!(legal.merchantName ?? "").trim() || !legal.offerExpiry || !legal.privacyPolicyUrl || !legal.qrTermsConfirmed || !legal.noRiderDataWithoutConsent)) {
     return ["Referral/discount campaigns require merchant name, expiry, privacy policy URL, clear terms confirmation and rider-data consent confirmation."];
   }
   return [];
@@ -1359,7 +1412,7 @@ function ConsentRow({ label, consent, onChange, onIssue }: { label: string; cons
   );
 }
 
-function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ label, on, onChange }: { label: string; on?: boolean; onChange: (v: boolean) => void }) {
   return (
     <button onClick={() => onChange(!on)} className="flex w-full items-center justify-between rounded-2xl border border-line bg-panel px-4 py-3 text-sm">
       {label}

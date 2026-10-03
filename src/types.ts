@@ -9,7 +9,7 @@ export type PlatformId =
   | "99taxis"
   | string;
 
-export type DriverRole = "admin" | "driver" | "demo" | "owner";
+export type DriverRole = "admin" | "driver" | "demo" | "owner" | "supervisor";
 
 export interface Vehicle {
   make: string;
@@ -71,6 +71,10 @@ export interface ActivityLog {
   action: string;
   pairCode?: string;
   actorId?: string;
+  driverId?: string;
+  deviceId?: string;
+  deviceName?: string;
+  platforms?: string[];
   details?: Record<string, unknown>;
 }
 
@@ -121,6 +125,34 @@ export interface DisplaySettings {
   deviceProfiles?: DeviceProfile[];
   commercialCampaigns?: CommercialCampaign[];
   includeCommercial?: boolean;
+  /** Sleep pin-light shown on the rear glass while idle. */
+  sleepIndicator?: boolean;
+  /** Whether the driver can see the front-tablet mirror. */
+  frontDriverVisible?: boolean;
+  /** Tablet battery alerting. */
+  batteryAlertsEnabled?: boolean;
+  batteryAlertStep?: number;
+  batteryAlertCooldownMinutes?: number;
+  /** Last enterprise QA simulation result (driver console → Testing). */
+  enterpriseQa?: EnterpriseQaResult;
+}
+
+/**
+ * Result of the driver console's enterprise QA simulation.
+ * Control-plane only: it never creates real devices or sockets.
+ */
+export interface EnterpriseQaResult {
+  targetDevices: number;
+  simulatedOnline: number;
+  admittedDevices: number;
+  acknowledgedDevices: number;
+  recoveredDevices: number;
+  failedDevices: number;
+  estimatedDispatchPerSecond: number;
+  runDurationSeconds: number;
+  lastRunAt: number;
+  lastRunDurationMs: number;
+  note: string;
 }
 
 export interface DeviceProfile {
@@ -129,17 +161,20 @@ export interface DeviceProfile {
   position: "rear" | "front";
   label?: string;
   deviceId?: string;
-  powered?: boolean;
-  apps?: string[];
-  brightness?: number;
-  adaptiveBrightness?: boolean;
-  displayDurationSeconds?: number;
-  includeBlank?: boolean;
-  blankDurationSeconds?: number;
-  commercialEnabled?: boolean;
-  campaignIds?: string[];
-  passengerNameEnabled?: boolean;
+  /** Every field below is always materialised by createDeviceProfile(). */
+  powered: boolean;
+  apps: string[];
+  brightness: number;
+  adaptiveBrightness: boolean;
+  displayDurationSeconds: number;
+  includeBlank: boolean;
+  blankDurationSeconds: number;
+  commercialEnabled: boolean;
+  campaignIds: string[];
+  passengerNameEnabled: boolean;
   passengerName?: string;
+  /** NSW safety mode requires an explicit parked confirmation per device. */
+  commercialParkedConfirmed?: boolean;
 }
 
 export interface MotionState {
@@ -174,39 +209,83 @@ export interface CommercialCampaign {
   title: string;
   enabled: boolean;
   approved: boolean;
-  assetDataUrl: string;
-  mediaType: "image" | "video";
+  /** Cached pilot asset (data URL). Optional when an approved assetUrl is set. */
+  assetDataUrl?: string;
+  /** Approved remote asset — signed URL in the Phase 2 backend. */
+  assetUrl?: string;
+  /** Where a scan/click should land. Never shown as a QR under NSW Safety Mode. */
+  landingUrl?: string;
+  /** Schedule window (epoch ms). Undefined = always eligible. */
+  startAt?: number;
+  endAt?: number;
+  /** Per-campaign brightness ceiling (percent, 18-100). */
+  brightnessCap?: number;
+  /** "gif" is only allowed when NSW safety mode is off. */
+  mediaType: "image" | "video" | "gif";
   displaySeconds: number;
   target?: "rear" | "front" | "both";
   discountText?: string;
   referralCode?: string;
   legal?: CommercialCampaignLegal;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
+/**
+ * The six consent slots a commercial campaign carries. Used both as the shape
+ * of CommercialCampaignLegal's consent fields and as the role argument when
+ * issuing a consent PDF from the driver console.
+ */
+export type ConsentRole =
+  | "appOwner"
+  | "driver"
+  | "vehicleOwner"
+  | "campaignOwner"
+  | "trademarkAuthorization"
+  | "safetyAssessment";
+
 export interface CommercialCampaignLegal {
-  appOwner?: LegalConsent;
-  driver?: LegalConsent;
-  vehicleOwner?: LegalConsent;
-  campaignOwner?: LegalConsent;
-  trademarkAuthorization?: LegalConsent;
-  safetyAssessment?: LegalConsent;
+  /**
+   * The six consent records are always created together by blankCampaignLegal()
+   * and are required before a campaign can be displayed.
+   */
+  appOwner: LegalConsent;
+  driver: LegalConsent;
+  vehicleOwner: LegalConsent;
+  campaignOwner: LegalConsent;
+  trademarkAuthorization: LegalConsent;
+  safetyAssessment: LegalConsent;
   merchantName?: string;
   offerExpiry?: string;
   privacyPolicyUrl?: string;
   qrTermsConfirmed?: boolean;
   noRiderDataWithoutConsent?: boolean;
+  /** Driver confirms they are the registered owner of the display vehicle. */
+  driverIsVehicleOwner?: boolean;
+  /** Timestamp of the issued full-authorization pack, if any. */
+  fullAuthorizationIssuedAt?: number;
+  fullAuthorizationDelivery?: DeliveryStatus | string;
 }
+
+export type DeliveryStatus = "not-issued" | "prepared" | "delivered" | "failed";
 
 export interface LegalConsent {
   confirmed: boolean;
   signerName: string;
   agreementReference: string;
+  email?: string;
+  confirmedAt?: number;
+  /** Timestamp the consent PDF was generated for the signer. */
+  signedDocumentAt?: number;
+  deliveryStatus?: DeliveryStatus | string;
 }
 
 export interface DeviceProfileInput {
-  id: string;
+  /** Defaults to codeProfileId(pairCode, position) when omitted. */
+  id?: string;
   pairCode: string;
-  position: "rear" | "front";
+  position?: "rear" | "front";
+  deviceId?: string;
   label?: string;
   powered?: boolean;
   apps?: string[];

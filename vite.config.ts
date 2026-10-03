@@ -39,4 +39,15 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  // Dev/preview only (never used by the static Vercel deploy).
+  // Needed so the app is reachable through forwarded hosts: Codespaces,
+  // tunnels, and any sandbox proxy that rewrites the Host header.
+  server: {
+    host: true,
+    allowedHosts: true,
+  },
+  preview: {
+    host: true,
+    allowedHosts: true,
+  },
 });
