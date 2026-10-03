@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Peer from "peerjs";
 
 export interface SyncPacket {
@@ -352,123 +352,243 @@ export function usePairChannel(
 
 /**
  * Multi-pair fleet channel manager used by DriverConsole.
- * Opens a host channel for each pair code and exposes publish helpers.
+ * Uses the same BroadcastChannel + PeerJS + relay stack as usePairChannel
+ * so phone ↔ tablet works across real devices.
  */
 export function useFleetChannels(
   pairCodes: string[],
   onMessage?: (packet: SyncPacket, pairCode: string) => void
 ) {
-  const channelsRef = useRef<Map<string, BroadcastChannel>>(new Map());
-  const [connectedCodes, setConnectedCodes] = useState<string[]>([]);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
-  const pairKey = pairCodes.filter(Boolean).sort().join("|");
+  const publishersRef = useRef<Map<string, (packet: SyncPacket) => void>>(new Map());
+  const [connectedCodes, setConnectedCodes] = useState<string[]>([]);
+
+  const codes = useMemo(
+    () => [...new Set(pairCodes.filter(Boolean))],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pairCodes.join("|")]
+  );
 
   useEffect(() => {
-    const codes = pairCodes.filter(Boolean);
-    const nextMap = new Map<string, BroadcastChannel>();
-    const connected: string[] = [];
+    if (typeof window === "undefined") return;
+
+    const cleanups: Array<() => void> = [];
+    const nextPublishers = new Map<string, (packet: SyncPacket) => void>();
+    const connected = new Set<string>();
 
     for (const code of codes) {
-      try {
-        const existing = channelsRef.current.get(code);
-        if (existing) {
-          nextMap.set(code, existing);
-          connected.push(code);
-          continue;
+      const channelName = `retroflex-${code}`;
+      let bc: BroadcastChannel | null = null;
+      let peer: Peer | null = null;
+      let peerId: string | null = null;
+      const connectedPeers = new Map<string, any>();
+      let heartbeatInterval: number | null = null;
+      let reconnectTimeout: number | null = null;
+      let reconnectDelay = 1000;
+      let isActive = true;
+
+      const logError = (err: string) => {
+        console.error(`[Retroflex fleet/${code}]`, err);
+      };
+
+      const publishPacket = (packet: SyncPacket) => {
+        const packetId = `pkt_\( {Date.now()}_ \){Math.random().toString(36).slice(2, 10)}`;
+        const packetWithId = { ...packet, packetId };
+
+        // BroadcastChannel (same browser / same origin tabs)
+        if (bc) {
+          try {
+            bc.postMessage(packetWithId);
+          } catch (err) {
+            logError(`BroadcastChannel post failed: ${err}`);
+          }
         }
 
-        const channelName = `retroflex-${code}`;
-        const bc = new BroadcastChannel(channelName);
+        // PeerJS (real phone ↔ tablet)
+        for (const [id, conn] of connectedPeers) {
+          try {
+            if (conn.open) {
+              conn.send(packetWithId);
+            } else {
+              connectedPeers.delete(id);
+            }
+          } catch (err) {
+            logError(`PeerJS send failed: ${err}`);
+            connectedPeers.delete(id);
+          }
+        }
 
-        const handleMessage = (event: MessageEvent<SyncPacket>) => {
+        // Cloud relay fallback
+        try {
+          fetch(`${RELAY_SERVER}/relay`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pairCode: code,
+              fromRole: "host",
+              packet: packetWithId,
+              timestamp: Date.now(),
+            }),
+          }).catch(() => undefined);
+        } catch {
+          // optional
+        }
+      };
+
+      nextPublishers.set(code, publishPacket);
+
+      // --- BroadcastChannel ---
+      try {
+        bc = new BroadcastChannel(channelName);
+        bc.addEventListener("message", (event: MessageEvent<SyncPacket>) => {
           const packet = event.data;
           if (packet?.packetId) {
             try {
-              bc.postMessage({ type: "ack", acknowledges: packet.packetId });
+              bc?.postMessage({ type: "ack", acknowledges: packet.packetId });
             } catch {
               // ignore
             }
           }
           onMessageRef.current?.(packet, code);
-        };
-
-        bc.addEventListener("message", handleMessage);
-        (bc as any).__handler = handleMessage;
-        nextMap.set(code, bc);
-        connected.push(code);
+        });
+        connected.add(code);
       } catch (err) {
-        console.error(`[Retroflex fleet] Failed to open channel for ${code}`, err);
+        logError(`BroadcastChannel init failed: ${err}`);
       }
-    }
 
-    // Close channels that are no longer needed
-    for (const [code, bc] of channelsRef.current) {
-      if (!nextMap.has(code)) {
+      // --- PeerJS ---
+      const initPeer = () => {
+        if (!isActive) return;
         try {
-          const handler = (bc as any).__handler;
-          if (handler) bc.removeEventListener("message", handler);
-          bc.close();
+          if (peer) {
+            peer.destroy();
+            connectedPeers.clear();
+          }
+
+          peerId = `host-\( {code}- \){Math.random().toString(36).slice(2, 10)}`;
+          peer = new Peer(peerId, {
+            host: new URL(RELAY_SERVER).hostname,
+            port: parseInt(new URL(RELAY_SERVER).port || "443"),
+            path: "/peerjs",
+            secure: RELAY_SERVER.startsWith("https"),
+            config: {
+              iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" },
+                {
+                  urls: "turn:relay.retroflex.app:3478",
+                  username: "retroflex",
+                  credential: "beacon2024",
+                },
+              ],
+            },
+          });
+
+          peer.on("connection", (connection) => {
+            if (!isActive) return;
+
+            connection.on("open", () => {
+              connectedPeers.set(connection.peer, connection);
+              connected.add(code);
+              setConnectedCodes([...connected]);
+              reconnectDelay = 1000;
+            });
+
+            connection.on("data", (packet: SyncPacket) => {
+              if (packet?.packetId) {
+                try {
+                  connection.send({ type: "ack", acknowledges: packet.packetId });
+                } catch {
+                  // ignore
+                }
+              }
+              onMessageRef.current?.(packet, code);
+            });
+
+            connection.on("close", () => {
+              connectedPeers.delete(connection.peer);
+            });
+
+            connection.on("error", (err) => {
+              logError(`Peer connection error: ${err.message}`);
+              connectedPeers.delete(connection.peer);
+            });
+          });
+
+          peer.on("open", () => {
+            if (!isActive) return;
+            // Heartbeat so tablet sees the host
+            heartbeatInterval = window.setInterval(() => {
+              publishPacket({
+                type: "hello",
+                device: {
+                  id: peerId!,
+                  name: "Driver phone",
+                  pairCode: code,
+                  position: "front",
+                  lastSeen: Date.now(),
+                },
+              });
+            }, HEARTBEAT_INTERVAL);
+          });
+
+          peer.on("error", (err) => {
+            logError(`PeerJS error: ${err.message}`);
+            if (isActive && reconnectDelay < 30000) {
+              reconnectTimeout = window.setTimeout(() => {
+                if (isActive) initPeer();
+              }, reconnectDelay);
+              reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+            }
+          });
+        } catch (err) {
+          logError(`PeerJS init failed: ${err}`);
+          if (isActive && reconnectDelay < 30000) {
+            reconnectTimeout = window.setTimeout(initPeer, reconnectDelay);
+            reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+          }
+        }
+      };
+
+      initPeer();
+
+      cleanups.push(() => {
+        isActive = false;
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        try {
+          bc?.close();
         } catch {
           // ignore
         }
-      }
+        try {
+          peer?.destroy();
+        } catch {
+          // ignore
+        }
+        connectedPeers.clear();
+      });
     }
 
-    channelsRef.current = nextMap;
-    setConnectedCodes(connected);
-  }, [pairKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    publishersRef.current = nextPublishers;
+    setConnectedCodes([...connected]);
 
-  // Cleanup on unmount
-  useEffect(() => {
     return () => {
-      for (const [, bc] of channelsRef.current) {
-        try {
-          const handler = (bc as any).__handler;
-          if (handler) bc.removeEventListener("message", handler);
-          bc.close();
-        } catch {
-          // ignore
-        }
-      }
-      channelsRef.current.clear();
+      cleanups.forEach((fn) => fn());
+      publishersRef.current.clear();
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codes.join("|")]);
 
   const publishTo = useCallback((pairCode: string, packet: SyncPacket) => {
-    const bc = channelsRef.current.get(pairCode);
-    if (!bc) return;
-
-    const packetId = `pkt_\( {Date.now()}_ \){Math.random().toString(36).slice(2, 10)}`;
-    const packetWithId = { ...packet, packetId };
-
-    try {
-      bc.postMessage(packetWithId);
-    } catch (err) {
-      console.error(`[Retroflex fleet] publishTo ${pairCode} failed`, err);
-    }
-
-    // Optional cloud relay
-    try {
-      fetch(`${RELAY_SERVER}/relay`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pairCode,
-          fromRole: "host",
-          packet: packetWithId,
-          timestamp: Date.now(),
-        }),
-      }).catch(() => undefined);
-    } catch {
-      // optional
-    }
+    publishersRef.current.get(pairCode)?.(packet);
   }, []);
 
   const publishAll = useCallback(
     (builder: (pairCode: string) => SyncPacket) => {
-      for (const code of channelsRef.current.keys()) {
+      for (const code of publishersRef.current.keys()) {
         publishTo(code, builder(code));
       }
     },
