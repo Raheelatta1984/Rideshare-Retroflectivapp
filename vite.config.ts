@@ -33,6 +33,10 @@ function zipPlugin(): Plugin {
 }
 
 export default defineConfig({
+  // Relative base so the same build works at a domain root (Vercel) and at a
+  // GitHub Pages project subpath (/Rideshare-Retroflectivapp/). Routing is
+  // hash-based, so the document path never changes and relative URLs stay valid.
+  base: "./",
   plugins: [react(), tailwindcss(), viteSingleFile(), zipPlugin()],
   resolve: {
     alias: {

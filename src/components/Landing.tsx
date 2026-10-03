@@ -7,7 +7,8 @@ const STREET = "https://images.pexels.com/photos/14116146/pexels-photo-14116146.
 const DRIVER = "https://images.pexels.com/photos/8387441/pexels-photo-8387441.jpeg?auto=compress&cs=tinysrgb&w=1400";
 const PICKUP = "https://images.pexels.com/photos/5357600/pexels-photo-5357600.jpeg?auto=compress&cs=tinysrgb&w=1400";
 const CAR = "https://images.pexels.com/photos/15264156/pexels-photo-15264156.jpeg?auto=compress&cs=tinysrgb&w=1400";
-const CLOSE = "/images/display-close.jpg";
+// Relative: resolves under a Pages project subpath as well as a domain root.
+const CLOSE = "images/display-close.jpg";
 
 export function Landing({ go }: { go: (path: string) => void }) {
   return (
