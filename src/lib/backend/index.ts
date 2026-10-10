@@ -14,7 +14,7 @@ import { createSupabaseBackend, readSupabaseConfig } from "./supabase";
  */
 
 export * from "./types";
-export { createLocalBackend, newEventId } from "./local";
+export { createLocalBackend, newEventId, toTerminalAccount, uniquePairCode } from "./local";
 export { createSupabaseBackend, readSupabaseConfig } from "./supabase";
 export { issueManifest, verifyManifest, buildManifestEntries, canonicalize } from "./manifest";
 export { EventQueue } from "./queue";

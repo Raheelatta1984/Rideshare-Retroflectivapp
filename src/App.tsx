@@ -2,8 +2,12 @@ import { useState, type ReactNode } from "react";
 import { StoreProvider, useStore } from "./store";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { normalizeDeviceProfile } from "./lib/devices";
+import { normalizePairCode } from "./lib/id";
 import { useHash, useNow } from "./hooks";
 import { db } from "./lib/storage";
+import { parseTerminalRequest, terminalConsentKey, type TerminalRequest } from "./lib/terminals";
+import { TerminalSetup } from "./components/TerminalSetup";
+import type { TerminalBinding } from "./types";
 import { Landing } from "./components/Landing";
 import { Auth } from "./components/Auth";
 import { ForgotPassword, ResetPassword, VerifyResetCode } from "./components/PasswordReset";
@@ -40,6 +44,14 @@ function Router() {
 
   if (resetMode) {
     return <ResetPassword token={resetToken ?? ""} go={go} />;
+  }
+
+  // Scanned terminal QR (?mode=terminal, or #/terminal). Checked before every
+  // website route on purpose: a terminal shows sign-up/login, then the glass.
+  // Nothing else from the site is reachable from here.
+  const terminalRequest = parseTerminalRequest(window.location.search, path);
+  if (terminalRequest.active) {
+    return <TerminalFlow request={terminalRequest} go={go} />;
   }
 
   if (tabletCode && tabletMode) {
@@ -104,8 +116,41 @@ function SourceGate({ children, go }: { children: ReactNode; go: (p: string) => 
   return <>{children}</>;
 }
 
+/**
+ * The scanned-terminal flow.
+ *
+ * Assigned already → the glass. Not assigned → sign-up / pair-code login, then
+ * one Assign step. There is deliberately no route out to the rest of the site.
+ */
+function TerminalFlow({ request, go }: { request: TerminalRequest; go: (p: string) => void }) {
+  const { ready, terminalBinding } = useStore();
+  const [assigned, setAssigned] = useState<TerminalBinding | null>(null);
+  const binding = assigned ?? terminalBinding;
+
+  if (!ready) {
+    return <div className="grid min-h-dvh place-items-center bg-ink text-[11px] tracking-[0.4em] text-mist">CHECKING TERMINAL</div>;
+  }
+
+  const authorized = !!binding && localStorage.getItem(terminalConsentKey(binding.position, binding.pairCode)) === "yes";
+  if (binding && authorized) {
+    return (
+      <div className="h-dvh w-full bg-black">
+        <TabletAccess code={binding.pairCode} position={binding.position} go={go} />
+      </div>
+    );
+  }
+
+  return (
+    <TerminalSetup
+      code={request.code ?? binding?.pairCode ?? null}
+      position={binding?.position ?? request.position}
+      onAssigned={setAssigned}
+    />
+  );
+}
+
 function TabletAccess({ code, position, go }: { code: string; position: "rear" | "front"; go: (p: string) => void }) {
-  const key = `rf:tablet-consent:${position}:${code.toUpperCase()}`;
+  const key = terminalConsentKey(position, code);
   const [authorized, setAuthorized] = useState(() => localStorage.getItem(key) === "yes");
   const [showLog, setShowLog] = useState(false);
 
@@ -190,12 +235,26 @@ function Gate({ children, go }: { children: ReactNode; go: (p: string) => void }
 }
 
 function PairedDisplay({ code, position = "rear", go, onExit }: { code: string; position?: "rear" | "front"; go: (p: string) => void; onExit?: () => void }) {
-  const { driver, powered, activeRide, settings } = useStore();
-  const sameBooth = !!driver && (position === "front" ? driver.frontPairCode : driver.pairCode)?.toUpperCase() === code.toUpperCase();
+  const { driver, powered, activeRide, settings, terminalBinding, terminalBooth } = useStore();
+  const wanted = normalizePairCode(code);
+  const sameBooth = !!driver && normalizePairCode(position === "front" ? driver.frontPairCode : driver.pairCode) === wanted;
   const directProfile = sameBooth
     ? settings.deviceProfiles?.map(normalizeDeviceProfile).find((profile) => profile.position === position && profile.pairCode === code && !profile.deviceId)
     : undefined;
   const positionMaster = position === "front" ? (settings.frontMasterOn ?? true) : (settings.rearMasterOn ?? true);
+
+  // A terminal assigned through the QR flow has no console session — that is the
+  // point, the console stays locked on the glass. When its booth is known (local
+  // record or shared backend) the display still follows the owner's settings.
+  const boundBooth =
+    !sameBooth && terminalBinding && terminalBooth
+      && terminalBinding.position === position
+      && normalizePairCode(terminalBinding.pairCode) === wanted
+      && terminalBinding.accountId === terminalBooth.account.id
+      ? terminalBooth
+      : null;
+  const boothMaster = boundBooth ? (boundBooth.settings.masterOn ?? false) && positionMaster : false;
+
   return (
     <DisplayScreen
       pairCode={code}
@@ -203,6 +262,9 @@ function PairedDisplay({ code, position = "rear", go, onExit }: { code: string; 
       position={position}
       settings={sameBooth ? { ...settings, masterOn: powered && positionMaster, apps: directProfile?.apps ?? driver?.platforms } : undefined}
       powered={sameBooth ? powered && positionMaster && (directProfile?.powered ?? true) : undefined}
+      // A bound terminal follows its booth until the driver phone speaks, then
+      // the phone wins — management stays on the mobile, as designed.
+      bootstrapSettings={!sameBooth && boundBooth ? { ...boundBooth.settings, masterOn: boothMaster } : undefined}
       onExit={onExit ?? (() => go("/"))}
     />
   );

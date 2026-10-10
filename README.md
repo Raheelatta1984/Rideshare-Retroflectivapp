@@ -11,6 +11,7 @@ Frontend only. Driver booth, rides, display settings and phone↔tablet pairing 
 | Path | What to test |
 | --- | --- |
 | `#/lab` | Phone + rear tablet on one screen. Start here. |
+| `?mode=terminal` | **Terminal sign-up QR** — scan, log in or sign up, assign, glass |
 | `#/review` | Review checklist |
 | `#/demo` | Cinematic pickup of Sarah |
 | `#/login` | Driver booth |
@@ -22,6 +23,18 @@ The dedicated QR/tablet receiver uses:
 ```text
 https://YOUR-APP-URL/?mode=tablet&display=PAIRCODE
 ```
+
+The terminal sign-up QR carries no code, so one QR works for every tablet:
+
+```text
+https://YOUR-APP-URL/?mode=terminal
+```
+
+Scanning it opens a bare shell — pair-code login, or sign-up, then one Assign
+step (rear or front glass, terminal name). Nothing else from the website is
+reachable there, and the tablet never gets the console: brightness, apps, power,
+campaigns and releasing a terminal all stay on the driver phone. Full flow,
+security posture and the Supabase path are in **[TERMINAL-SIGNUP.md](./TERMINAL-SIGNUP.md)**.
 
 ## Owner Source Archive
 

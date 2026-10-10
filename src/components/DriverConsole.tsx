@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BatteryCharging,
   Bell,
@@ -6,10 +6,13 @@ import {
   History,
   LogOut,
   Power,
+  QrCode,
   Radio,
+  RotateCw,
   Settings,
   Smartphone,
   Tablet,
+  Trash2,
 } from "lucide-react";
 import { useStore } from "../store";
 import { PLATFORMS, getPlatform } from "../lib/platforms";
@@ -17,7 +20,8 @@ import { formatPair } from "../lib/id";
 import { useFleetChannels } from "../lib/sync";
 import { kph, useMotion } from "../lib/motion";
 import { Check } from "lucide-react";
-import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DeviceProfile, DeviceTelemetry, DisplaySettings, DriverRole, LegalConsent, TabletBattery, TabletDevice } from "../types";
+import type { CommercialCampaign, CommercialCampaignLegal, ConsentRole, DeviceProfile, DeviceTelemetry, DisplaySettings, DriverRole, LegalConsent, TabletBattery, TabletDevice, TerminalBinding } from "../types";
+import { terminalQrUrl, terminalUrl } from "../lib/terminals";
 import { codeProfileId, createDeviceProfile, deviceProfileId, normalizeDeviceProfile, profileForDevice } from "../lib/devices";
 import { canDownloadSource, isCommercialOperator, isSourceOwner, SOURCE_OWNER_EMAIL } from "../lib/access";
 import { createConsentPdf, deliverAgreementPdf } from "../lib/agreements";
@@ -726,6 +730,7 @@ function DisplayTab({ connectedCodes }: { connectedCodes: string[] }) {
     <div className="px-5 py-6">
       <p className="text-[11px] tracking-[0.4em] text-amber">DISPLAY DEVICES</p>
       <h1 className="mt-2 font-display text-3xl">Pair rear and front.</h1>
+      <TerminalQrCard base={tabletBase} />
       <div className="mt-6 space-y-4">
         {devices.map((device) => {
           const url = `${tabletBase}?mode=tablet&position=${device.position}&display=${device.code}`;
@@ -746,12 +751,137 @@ function DisplayTab({ connectedCodes }: { connectedCodes: string[] }) {
         <li>2. Each tablet has an independent pair code, profile, brightness, platforms and campaigns.</li>
         <li>3. Scan the matching QR, authorize the display, then manage it from the driver phone.</li>
         <li>4. The global master and separate Rear/Front group controls determine which devices are active.</li>
+        <li>5. A new terminal scans the sign-up QR, creates an account or enters its code, and assigns itself — no console access needed on the tablet.</li>
       </ol>
+      <AssignedTerminals />
       <div className="mt-8 grid grid-cols-2 gap-3 text-sm">
         <Tip icon={BatteryCharging} t="Stays awake while ON" d="Each display holds screen and fullscreen while allowed by the driver safety gate." />
         <Tip icon={Tablet} t="Independent profiles" d="Front and rear pairing codes and device profiles are separate." />
         <Tip icon={Smartphone} t="Phone is the brain" d="Flip the switch on your phone. The glass follows instantly." />
         <Tip icon={Car} t="OFF means idle" d="Turning OFF drops the tablet to black and frees resources." />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The one QR every terminal can scan.
+ *
+ * It carries no pair code: the terminal decides for itself whether to sign up or
+ * log in with a code it already has. Print it, sticker it, or show it on the
+ * phone screen — it never expires and never leaks a booth code.
+ */
+function TerminalQrCard({ base }: { base: string }) {
+  const [copied, setCopied] = useState(false);
+  const url = terminalUrl(base, { position: "rear" });
+  const qr = terminalQrUrl(url, 260);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (in-app browsers do this). The URL is on screen anyway.
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-3xl border border-amber/30 bg-panel p-5">
+      <div className="flex items-start gap-3">
+        <QrCode className="mt-0.5 h-5 w-5 shrink-0 text-amber" />
+        <div>
+          <p className="text-sm font-medium">Terminal sign-up QR</p>
+          <p className="mt-1 text-xs leading-relaxed text-mist">
+            One code for every terminal. Scan → sign up or enter a pair code → pick rear or front → the glass starts.
+            The tablet never sees the website or the console.
+          </p>
+        </div>
+      </div>
+      <img src={qr} alt="Terminal sign-up QR" className="mx-auto mt-4 h-44 w-44 rounded-2xl border border-line" />
+      <p className="mt-3 break-all text-center text-[10px] text-mist">{url}</p>
+      <div className="mt-4 flex justify-center gap-2">
+        <button onClick={copy} className="rounded-xl bg-cream px-4 py-2 text-xs font-semibold text-ink">
+          {copied ? "Copied" : "Copy link"}
+        </button>
+        <button onClick={() => window.open(url, "_blank", "noopener")} className="rounded-xl border border-line px-3 py-2 text-xs text-cream">
+          Preview flow
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Terminals assigned to this booth, managed from the phone.
+ *
+ * On the local adapter this lists the terminals registered in this browser; with
+ * Supabase configured it lists every terminal the account owns, from anywhere.
+ */
+function AssignedTerminals() {
+  const { driver, recordActivity } = useStore();
+  const [bindings, setBindings] = useState<TerminalBinding[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void getBackend()
+      .terminals.list(driver?.id)
+      .then((items) => {
+        setBindings(items);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [driver?.id]);
+
+  useEffect(() => load(), [load]);
+
+  const release = async (binding: TerminalBinding) => {
+    setBusyId(binding.id);
+    await getBackend().terminals.unbind(binding.id).catch(() => undefined);
+    setBindings((items) => items.filter((item) => item.id !== binding.id));
+    recordActivity({
+      action: "Terminal released",
+      pairCode: binding.pairCode,
+      deviceId: binding.deviceId,
+      deviceName: binding.deviceName,
+      details: { position: binding.position, origin: binding.origin },
+    });
+    setBusyId(null);
+  };
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center justify-between">
+        <h2 className="text-[11px] tracking-[0.3em] text-amber">ASSIGNED TERMINALS</h2>
+        <button onClick={load} className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[10px] text-mist">
+          <RotateCw className="h-3 w-3" /> REFRESH
+        </button>
+      </div>
+      <div className="mt-3 space-y-2">
+        {loaded && bindings.length === 0 && (
+          <p className="rounded-2xl border border-line bg-panel px-4 py-3 text-xs text-mist">
+            No terminal has been assigned yet. Show the sign-up QR to the tablet and it will appear here.
+          </p>
+        )}
+        {bindings.map((binding) => (
+          <div key={binding.id} className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-panel px-4 py-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm text-cream">{binding.deviceName}</p>
+              <p className="mt-1 text-[10px] tracking-[0.16em] text-mist">
+                {binding.position.toUpperCase()} · {formatPair(binding.pairCode)} · {binding.origin.toUpperCase()}
+                {binding.lastSeen ? ` · SEEN ${formatAgo(Date.now() - binding.lastSeen)} AGO` : ""}
+              </p>
+            </div>
+            <button
+              onClick={() => void release(binding)}
+              disabled={busyId === binding.id}
+              className="flex shrink-0 items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[10px] text-mist disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> {busyId === binding.id ? "RELEASING" : "RELEASE"}
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
