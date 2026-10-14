@@ -278,14 +278,11 @@ function memorySink() {
 }
 
 function fakeBackendWith(sink: ReturnType<typeof memorySink>["sink"]): Backend {
-  return {
-    info: () => ({ kind: "local", label: "test", configured: true }),
-    campaigns: { list: async () => [], get: async () => null, upsert: async (c) => c, remove: async () => {}, setApproval: async () => null },
-    assets: { put: async () => ({ url: "", bytes: 0 }), signedUrl: async () => "", remove: async () => {} },
-    manifest: { issue: async () => ({ version: 2, issuedAt: 0, entries: [] }), verify: async () => ({ valid: true }) },
-    events: sink,
-    subscribe: () => () => {},
-  };
+  // Spread the real local adapter and swap the event sink only. Building the
+  // object literal by hand goes stale every time Backend grows a repository
+  // (accounts/terminals did exactly that), and the queue under test never
+  // touches the other members.
+  return { ...createLocalBackend(), events: sink };
 }
 
 describe("EventQueue", () => {

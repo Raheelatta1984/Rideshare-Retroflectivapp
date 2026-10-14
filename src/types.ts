@@ -86,6 +86,59 @@ export interface Device {
   lastSeen: number;
 }
 
+/* ------------------------------------------------------------------ *
+ * Terminal sign-up (scan-the-QR onboarding)
+ * ------------------------------------------------------------------ */
+
+/** Where a terminal is mounted. Front and rear are separate screens/codes. */
+export type TerminalPosition = "rear" | "front";
+
+/**
+ * The account a terminal belongs to.
+ *
+ * Deliberately a projection of `Driver` rather than a second identity model:
+ * the local adapter maps 1:1 onto the booth records already in `rf:drivers`,
+ * and the Supabase adapter maps onto `auth.users` + `booths`. Nothing in the
+ * terminal flow needs a password, so it is never carried here.
+ */
+export interface TerminalAccount {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  city: string;
+  pairCode: string;
+  frontPairCode?: string;
+  role?: DriverRole;
+  createdAt: string;
+  /** Which adapter produced/verified this account. */
+  source: "local" | "supabase";
+}
+
+/** How a terminal reached the sign-up flow. Recorded on the binding for audit. */
+export type TerminalOrigin = "signup" | "pair-code" | "email" | "console" | "url";
+
+/**
+ * A physical terminal assigned to a booth.
+ *
+ * One row per (deviceId, position) — the same tablet can be re-assigned from
+ * rear to front, which replaces the binding rather than duplicating it.
+ */
+export interface TerminalBinding {
+  id: string;
+  /** `rf:tablet-device-id` on the terminal's own browser. */
+  deviceId: string;
+  deviceName: string;
+  pairCode: string;
+  position: TerminalPosition;
+  /** Null when the terminal bound to a code with no account behind it. */
+  accountId: string | null;
+  accountEmail?: string;
+  origin: TerminalOrigin;
+  assignedAt: number;
+  lastSeen?: number;
+}
+
 export interface TabletBattery {
   percentage: number;
   charging: boolean;

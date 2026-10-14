@@ -23,12 +23,22 @@ import { useMotion } from "../lib/motion";
 import { requestWakeLock, useNow } from "../hooks";
 import { ChevronMark } from "./Logo";
 import { uid } from "../lib/id";
+import { readLocalBinding, terminalDeviceId } from "../lib/terminals";
 
 interface Props {
   pairCode?: string;
   position?: "rear" | "front";
   ride?: Ride | null;
   settings?: DisplaySettings;
+  /**
+   * Settings to show until the driver phone is heard from.
+   *
+   * Used by a terminal assigned through the sign-up QR: it has no console
+   * session, so `settings` (which wins over everything) must not be set —
+   * otherwise the phone's live commands would be ignored forever. This is the
+   * fallback only, and the first remote packet replaces it.
+   */
+  bootstrapSettings?: DisplaySettings;
   powered?: boolean;
   preview?: boolean;
   demoStopped?: boolean;
@@ -42,7 +52,7 @@ interface BrowserBatteryManager {
   removeEventListener: (event: "levelchange" | "chargingchange", handler: () => void) => void;
 }
 
-export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, settings: settingsProp, powered: poweredProp, preview, demoStopped, onExit }: Props) {
+export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, settings: settingsProp, bootstrapSettings, powered: poweredProp, preview, demoStopped, onExit }: Props) {
   const [remoteRide, setRemoteRide] = useState<Ride | null>(null);
   const [remoteSettings, setRemoteSettings] = useState<DisplaySettings>(defaultSettings());
   const [remoteMotion, setRemoteMotion] = useState<MotionState | null>(null);
@@ -134,6 +144,9 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
       if (saved.settings) {
         setRemoteSettings(saved.settings);
         setRemoteRide(saved.ride ?? null);
+        // A cached driver command outranks the bootstrap settings: it is the
+        // last thing the owner actually asked for.
+        setHasRemoteSync(true);
       }
     } catch {
       /* retain default blank state */
@@ -141,7 +154,7 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   }, [pairCode, settingsProp]);
 
   const ride = rideProp !== undefined ? rideProp : remoteRide;
-  const settings = settingsProp ?? remoteSettings;
+  const settings = settingsProp ?? (hasRemoteSync ? remoteSettings : (bootstrapSettings ?? remoteSettings));
   const deviceProfile = settings.deviceProfiles?.length
     ? profileForDevice(settings.deviceProfiles, {
         id: deviceIdRef.current,
@@ -310,7 +323,7 @@ export function DisplayScreen({ pairCode, position = "rear", ride: rideProp, set
   // Moving/unknown motion is intentionally the same pure black low-power screen as OFF.
   const sleeping = !powered || status === "complete" || !motionAllowed;
   const showApps = powered && motionAllowed && (!ride || status === "idle");
-  const waitingForPhone = !preview && !settingsProp && !!pairCode && !hasRemoteSync;
+  const waitingForPhone = !preview && !settingsProp && !bootstrapSettings && !!pairCode && !hasRemoteSync;
 
   const daylight = hour >= 7 && hour < 19;
   const configuredBrightness = deviceProfile?.brightness ?? settings.brightness ?? 70;
@@ -1002,15 +1015,16 @@ function enterDisplayFullscreen() {
 }
 
 function getTabletDeviceId() {
-  const key = "rf:tablet-device-id";
-  const current = localStorage.getItem(key);
-  if (current) return current;
-  const next = `tab_${Math.random().toString(36).slice(2, 10)}`;
-  localStorage.setItem(key, next);
-  return next;
+  // Shared with the sign-up flow so the id assigned during onboarding and the id
+  // announced over the pairing channel are always the same device.
+  return terminalDeviceId();
 }
 
 function getTabletDeviceName(position: "rear" | "front" = "rear") {
+  // The name typed in the Assign step is what the driver phone should list.
+  const binding = readLocalBinding();
+  if (binding && binding.position === position && binding.deviceName.trim()) return binding.deviceName.trim();
+
   const ua = navigator.userAgent;
   const android = ua.match(/Android[^;]*;\s*([^;)]+)/i)?.[1]?.trim();
   const label = position === "front" ? "Front tablet" : "Rear tablet";

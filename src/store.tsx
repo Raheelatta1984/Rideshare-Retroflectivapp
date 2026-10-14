@@ -1,10 +1,24 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { ActivityLog, DisplaySettings, Driver, Ride, RideStatus } from "./types";
+import type {
+  ActivityLog,
+  DisplaySettings,
+  Driver,
+  Ride,
+  RideStatus,
+  TerminalAccount,
+  TerminalBinding,
+  TerminalOrigin,
+  TerminalPosition,
+} from "./types";
 import { db, defaultSettings } from "./lib/storage";
-import { pairCode, uid } from "./lib/id";
+import { normalizePairCode, pairCode, uid } from "./lib/id";
 import { DEMO_DRIVER, seedDefaultAdmins, seedDemoDriver } from "./lib/demo";
 import { SAMPLE_RIDES } from "./lib/platforms";
 import { isSourceOwner, resolvedRole, SOURCE_OWNER_EMAIL } from "./lib/access";
+import { getBackend, toTerminalAccount } from "./lib/backend";
+import type { AccountResult, PairCodeResolution } from "./lib/backend/types";
+import { createDeviceProfile, deviceProfileId, normalizeDeviceProfile } from "./lib/devices";
+import { parseTerminalRequest, readLocalBinding, terminalConsentKey, terminalDeviceId } from "./lib/terminals";
 
 interface Store {
   ready: boolean;
@@ -32,6 +46,22 @@ interface Store {
   rotatePair: () => string;
   rotateFrontPair: () => string;
   recordActivity: (entry: Omit<ActivityLog, "id" | "at" | "actorId">) => void;
+  /** Terminal sign-up flow — see TERMINAL-SIGNUP.md. Provider-agnostic. */
+  terminalAccount: TerminalAccount | null;
+  terminalBinding: TerminalBinding | null;
+  /** Booth resolved from a pair code, with its display settings. No session. */
+  terminalBooth: { account: TerminalAccount; settings: DisplaySettings } | null;
+  signUpTerminal: (input: { name: string; email: string; password: string; phone?: string; city?: string }) => Promise<AccountResult>;
+  signInTerminal: (input: { email: string; password: string }) => Promise<AccountResult>;
+  resolveTerminalCode: (code: string) => Promise<PairCodeResolution>;
+  assignTerminal: (input: {
+    pairCode: string;
+    position: TerminalPosition;
+    deviceName: string;
+    origin: TerminalOrigin;
+    account?: TerminalAccount | null;
+  }) => Promise<{ binding: TerminalBinding | null; error: string | null }>;
+  releaseTerminal: () => Promise<void>;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -47,6 +77,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [powered, setPoweredState] = useState(false);
   const [settings, setSettings] = useState<DisplaySettings>(defaultSettings());
+  // Terminal sign-up state. `terminalAccount` is the account behind the scanned
+  // flow; `terminalBooth` is a locally-known booth resolved from a pair code.
+  // Neither creates a console session on the terminal — see assignTerminal.
+  const [terminalAccount, setTerminalAccount] = useState<TerminalAccount | null>(null);
+  const [terminalBinding, setTerminalBinding] = useState<TerminalBinding | null>(() => readLocalBinding());
+  const [terminalBooth, setTerminalBooth] = useState<{ account: TerminalAccount; settings: DisplaySettings } | null>(null);
 
   useEffect(() => {
     const legacyDemo = db.findByEmail(DEMO_DRIVER.email);
@@ -78,6 +114,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     }
     setReady(true);
+  }, []);
+
+  // Refresh terminal state from the provider, but only on a device that is
+  // actually acting as a terminal. A marketing visitor never gets a device id
+  // minted and never triggers a registry round-trip.
+  useEffect(() => {
+    const request = parseTerminalRequest(
+      typeof window === "undefined" ? "" : window.location.search,
+      typeof window === "undefined" ? "" : window.location.hash,
+    );
+    const existing = readLocalBinding();
+    if (!request.active && !existing) return;
+
+    let cancelled = false;
+    const deviceId = terminalDeviceId();
+
+    // A binding that points at a booth stored in this browser carries its display
+    // settings, so a reload goes straight back to the glass without re-assigning.
+    if (existing?.accountId) {
+      const booth = db.findById(existing.accountId);
+      if (booth) {
+        setTerminalBooth({ account: toTerminalAccount(booth), settings: db.getSettings(booth.id) });
+      }
+    }
+
+    void getBackend()
+      .terminals.find(deviceId)
+      .then((binding) => {
+        if (!cancelled && binding) setTerminalBinding(binding);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const hydrate = (d: Driver) => {
@@ -307,6 +378,165 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return next;
   };
 
+  /* ------------------------------------------------------------------ *
+   * Terminal sign-up — scan the QR, log in or sign up, assign, display.
+   *
+   * Everything here goes through the provider-agnostic backend, so the same
+   * flow runs on the on-device adapter today and on Supabase the moment
+   * VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are set.
+   * ------------------------------------------------------------------ */
+
+  const adoptAccount = (account: TerminalAccount | null) => {
+    if (!account) return;
+    setTerminalAccount(account);
+    // The local adapter's account IS a booth record in this browser. Loading it
+    // as the terminal's booth gives the display real settings — without writing
+    // a session, so the driver console stays locked on the terminal.
+    const booth = db.findById(account.id);
+    if (booth) setTerminalBooth({ account: toTerminalAccount(booth), settings: db.getSettings(booth.id) });
+  };
+
+  const signUpTerminal = async (input: { name: string; email: string; password: string; phone?: string; city?: string }): Promise<AccountResult> => {
+    const result = await getBackend().accounts.signUp(input);
+    if (result.error || !result.account) return result;
+    adoptAccount(result.account);
+    return result;
+  };
+
+  const signInTerminal = async (input: { email: string; password: string }): Promise<AccountResult> => {
+    const result = await getBackend().accounts.signIn(input);
+    if (result.error || !result.account) return result;
+    adoptAccount(result.account);
+    return result;
+  };
+
+  const resolveTerminalCode = async (code: string): Promise<PairCodeResolution> => {
+    const resolution = await getBackend().accounts.resolvePairCode(code);
+    if (resolution.account) adoptAccount(resolution.account);
+    return resolution;
+  };
+
+  const assignTerminal = async (input: {
+    pairCode: string;
+    position: TerminalPosition;
+    deviceName: string;
+    origin: TerminalOrigin;
+    account?: TerminalAccount | null;
+  }): Promise<{ binding: TerminalBinding | null; error: string | null }> => {
+    const code = normalizePairCode(input.pairCode);
+    if (code.length !== 6) return { binding: null, error: "A pair code is six characters." };
+
+    const deviceId = terminalDeviceId();
+    const owner = input.account ?? terminalAccount ?? terminalBooth?.account ?? null;
+    const position = input.position === "front" ? "front" : "rear";
+
+    try {
+      const binding = await getBackend().terminals.bind({
+        deviceId,
+        deviceName: input.deviceName,
+        pairCode: code,
+        position,
+        accountId: owner?.id ?? null,
+        accountEmail: owner?.email || undefined,
+        origin: input.origin,
+      });
+
+      // Assigning IS the authorization: the person holding the terminal just
+      // confirmed it, so the separate "I authorize display control" gate must
+      // not ask again on every reload.
+      localStorage.setItem(terminalConsentKey(position, code), "yes");
+      setTerminalBinding(binding);
+
+      db.addTabletActivity({
+        id: uid("tablog"),
+        at: Date.now(),
+        pairCode: code,
+        deviceId,
+        action: "Terminal assigned",
+        details: { position, deviceName: input.deviceName, origin: input.origin, account: owner?.email ?? "no account" },
+      });
+
+      /* Booth-side bookkeeping.
+       *
+       * Three cases, in order of how much this device knows:
+       *   1. the console session owns the code  → update live store settings
+       *   2. a booth was resolved during this flow → update its stored settings
+       *   3. only an account id (shared backend)  → keep a local settings mirror
+       * In cases 2 and 3 the terminal holds no session, so the driver console
+       * stays locked on the tablet while the glass still follows its owner.
+       */
+      const codeOf = (pair: string | undefined, front: string | undefined) => normalizePairCode(position === "front" ? front : pair);
+      const ownsCode = (candidate: TerminalAccount | null | undefined) =>
+        !!candidate && (normalizePairCode(candidate.pairCode) === code || normalizePairCode(candidate.frontPairCode) === code);
+
+      const sessionOwns = !!driver && codeOf(driver.pairCode, driver.frontPairCode) === code;
+      // Only ever write into a booth that actually owns the assigned code, so a
+      // mistyped code cannot attach a terminal to somebody else's settings.
+      const resolvedAccount = sessionOwns ? null : ownsCode(terminalBooth?.account) ? terminalBooth?.account ?? null : ownsCode(owner) ? owner : null;
+      const accountId = sessionOwns ? driver?.id ?? null : resolvedAccount?.id ?? null;
+
+      if (accountId) {
+        const base = sessionOwns ? settings : terminalBooth && terminalBooth.account.id === accountId ? terminalBooth.settings : db.getSettings(accountId);
+        const profile = createDeviceProfile({
+          id: deviceProfileId(deviceId, position),
+          deviceId,
+          pairCode: code,
+          position,
+          label: input.deviceName,
+          apps: base.apps ?? [],
+        });
+        const deviceProfiles = [
+          ...(base.deviceProfiles ?? []).map(normalizeDeviceProfile).filter((item) => item.id !== profile.id),
+          profile,
+        ];
+        // A terminal that just created its own booth has no phone paired yet, so
+        // light the beacon — otherwise the driver signs up and stares at a black
+        // screen. Joining an existing booth leaves the driver switch exactly
+        // where its owner set it; the phone stays the authority either way.
+        const masterOn = input.origin === "signup" ? true : base.masterOn;
+        const nextSettings = { ...base, deviceProfiles, masterOn };
+        db.saveSettings(accountId, nextSettings);
+
+        if (sessionOwns) {
+          setSettings(nextSettings);
+          if (input.origin === "signup") setPoweredState(true);
+          recordActivity({
+            action: "Terminal assigned",
+            pairCode: code,
+            deviceId,
+            deviceName: input.deviceName,
+            details: { position, origin: input.origin },
+          });
+        } else {
+          if (resolvedAccount) setTerminalBooth({ account: resolvedAccount, settings: nextSettings });
+        }
+      }
+
+      return { binding, error: null };
+    } catch (error) {
+      return { binding: null, error: error instanceof Error ? error.message : "Could not assign this terminal." };
+    }
+  };
+
+  const releaseTerminal = async () => {
+    const binding = terminalBinding ?? readLocalBinding();
+    if (binding) {
+      await getBackend().terminals.unbind(binding.id).catch(() => undefined);
+      localStorage.removeItem(terminalConsentKey(binding.position, binding.pairCode));
+      db.addTabletActivity({
+        id: uid("tablog"),
+        at: Date.now(),
+        pairCode: binding.pairCode,
+        deviceId: binding.deviceId,
+        action: "Terminal released",
+        details: { position: binding.position },
+      });
+    }
+    setTerminalBinding(null);
+    setTerminalBooth(null);
+    setTerminalAccount(null);
+  };
+
   const activeRide = useMemo(
     () => rides.find((r) => !["complete", "idle"].includes(r.status)) ?? null,
     [rides],
@@ -338,6 +568,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     rotatePair,
     rotateFrontPair,
     recordActivity,
+    terminalAccount,
+    terminalBinding,
+    terminalBooth,
+    signUpTerminal,
+    signInTerminal,
+    resolveTerminalCode,
+    assignTerminal,
+    releaseTerminal,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

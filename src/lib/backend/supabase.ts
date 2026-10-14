@@ -1,5 +1,9 @@
-import type { CampaignEventRecord, CommercialCampaign, PlaylistManifest } from "../../types";
+import type { CampaignEventRecord, CommercialCampaign, PlaylistManifest, TerminalAccount, TerminalBinding } from "../../types";
 import type {
+  AccountRepository,
+  AccountResult,
+  AccountSignInInput,
+  AccountSignUpInput,
   AssetStore,
   Backend,
   BackendInfo,
@@ -7,11 +11,16 @@ import type {
   CampaignRepository,
   EventSink,
   ManifestService,
+  PairCodeResolution,
   RealtimeOptions,
+  TerminalBindingInput,
+  TerminalRegistry,
   Unsubscribe,
 } from "./types";
 import { issueManifest, verifyManifest } from "./manifest";
-import { blobToDataUrl } from "./local";
+import { blobToDataUrl, createLocalBackend } from "./local";
+import { normalizePairCode, pairCode as mintPairCode } from "../id";
+import { normalizeTerminalBinding, writeLocalBinding } from "../terminals";
 
 /**
  * Supabase backend — Postgres + Storage + Realtime, over REST.
@@ -220,6 +229,399 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
     },
   };
 
+  /* ------------------------------------------------------------------ *
+   * Accounts — Supabase Auth over REST + a `booths` row holding the codes
+   *
+   * Schema: supabase/migrations/0003_terminal_signup.sql
+   *   booths           one row per account: owner uuid, name, pair codes
+   *   booth_directory  anon-readable view (no email/phone) used to confirm a
+   *                    scanned pair code without exposing who owns it
+   *   devices          the terminal registry, extended with device_key/origin
+   *
+   * A terminal that binds to a code with no session on the device falls back to
+   * the local adapter, so the flow never dead-ends when auth is unavailable.
+   * ------------------------------------------------------------------ */
+
+  const SESSION_KEY = "rf:backend:supabase-session";
+  const localFallback = createLocalBackend({ secret: config.manifestKey, keyId: config.manifestKeyId });
+
+  interface StoredSession {
+    accessToken: string;
+    refreshToken?: string;
+    account: TerminalAccount;
+  }
+
+  interface AuthSession {
+    access_token?: string;
+    refresh_token?: string;
+    user?: { id: string; email?: string; user_metadata?: Record<string, unknown> };
+    /** GoTrue returns an empty identities array when the email is taken. */
+    identities?: unknown[];
+  }
+
+  interface BoothRow {
+    id: string;
+    owner?: string | null;
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    city?: string | null;
+    pair_code: string;
+    front_pair_code?: string | null;
+    created_at?: string | null;
+  }
+
+  interface DeviceRow {
+    id: string;
+    name: string;
+    pair_code: string;
+    position: string;
+    last_seen?: string | null;
+    owner?: string | null;
+    device_key?: string | null;
+    account_email?: string | null;
+    assigned_at?: string | null;
+    origin?: string | null;
+  }
+
+  function readStoredSession(): StoredSession | null {
+    if (typeof localStorage === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as StoredSession;
+      return parsed?.accessToken && parsed?.account ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStoredSession(session: StoredSession | null): void {
+    if (typeof localStorage === "undefined") return;
+    try {
+      if (!session) localStorage.removeItem(SESSION_KEY);
+      else localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } catch {
+      // A full localStorage must not break sign-in for this render.
+    }
+  }
+
+  async function authRequest<T>(path: string, body: unknown, token?: string): Promise<T> {
+    const response = await fetchImpl(`${config.url}/auth/v1/${path}`, {
+      method: "POST",
+      headers: {
+        apikey: config.anonKey,
+        Authorization: `Bearer ${token ?? config.anonKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      let message = text.slice(0, 200);
+      try {
+        message = (JSON.parse(text) as { msg?: string; message?: string; error_description?: string }).msg
+          ?? (JSON.parse(text) as { message?: string }).message
+          ?? (JSON.parse(text) as { error_description?: string }).error_description
+          ?? message;
+      } catch {
+        /* keep the raw body */
+      }
+      throw new Error(message || `Supabase auth ${response.status}`);
+    }
+    return (text ? JSON.parse(text) : {}) as T;
+  }
+
+  async function loadBooth(ownerId: string, token: string): Promise<BoothRow | null> {
+    const response = await fetchImpl(
+      rest(`booths?owner=eq.${encodeURIComponent(ownerId)}&select=*&limit=1`),
+      { headers: { ...headers, Authorization: `Bearer ${token}` } },
+    );
+    if (!response.ok) return null;
+    const rows = (await response.json()) as BoothRow[];
+    return rows[0] ?? null;
+  }
+
+  /** The booth for a session, minting one (with fresh pair codes) on first use. */
+  async function ensureBooth(session: AuthSession, token: string): Promise<BoothRow | null> {
+    const ownerId = session.user?.id ?? "";
+    if (!ownerId) return null;
+    const existing = await loadBooth(ownerId, token);
+    if (existing) return existing;
+
+    const metadata = session.user?.user_metadata ?? {};
+    const attempt = async (codes: { pair: string; front: string }) => {
+      const response = await fetchImpl(rest("booths"), {
+        method: "POST",
+        headers: { Prefer: "return=representation", ...headers, Authorization: `Bearer ${token}` },
+        body: JSON.stringify([
+          {
+            owner: ownerId,
+            name: String(metadata.name ?? session.user?.email ?? "Driver"),
+            email: session.user?.email ?? null,
+            phone: metadata.phone ? String(metadata.phone) : null,
+            city: metadata.city ? String(metadata.city) : null,
+            pair_code: codes.pair,
+            front_pair_code: codes.front,
+          },
+        ]),
+      });
+      return response.ok ? (((await response.json()) as BoothRow[])[0] ?? null) : null;
+    };
+
+    // pair_code carries a unique index; a collision just means "try another".
+    return (
+      (await attempt({ pair: mintPairCode(), front: mintPairCode() }))
+      ?? (await attempt({ pair: mintPairCode(), front: mintPairCode() }))
+      ?? loadBooth(ownerId, token)
+    );
+  }
+
+  async function adoptSession(session: AuthSession): Promise<TerminalAccount | null> {
+    const token = session.access_token ?? "";
+    if (!token) return null;
+    const booth = await ensureBooth(session, token).catch(() => null);
+    const metadata = session.user?.user_metadata ?? {};
+    const account: TerminalAccount = {
+      id: booth?.owner ?? session.user?.id ?? "",
+      name: booth?.name ?? String(metadata.name ?? session.user?.email ?? "Driver"),
+      email: session.user?.email ?? "",
+      phone: booth?.phone ?? (metadata.phone ? String(metadata.phone) : ""),
+      city: booth?.city ?? (metadata.city ? String(metadata.city) : ""),
+      pairCode: booth?.pair_code ?? "",
+      frontPairCode: booth?.front_pair_code ?? undefined,
+      createdAt: booth?.created_at ?? new Date().toISOString(),
+      source: "supabase",
+    };
+    writeStoredSession({ accessToken: token, refreshToken: session.refresh_token, account });
+    return account;
+  }
+
+  const accounts: AccountRepository = {
+    async signUp(input: AccountSignUpInput): Promise<AccountResult> {
+      try {
+        const session = await authRequest<AuthSession>("signup", {
+          email: input.email.trim().toLowerCase(),
+          password: input.password,
+          data: { name: input.name.trim(), phone: input.phone ?? "", city: input.city ?? "" },
+        });
+        if (Array.isArray(session.identities) && session.identities.length === 0) {
+          return { account: null, error: "An account already exists for that email. Log in instead." };
+        }
+        if (!session.access_token) {
+          return {
+            account: null,
+            error: "Account created. Open the confirmation email, then log in on this terminal.",
+          };
+        }
+        const account = await adoptSession(session);
+        return account ? { account, error: null } : { account: null, error: "Signed in, but no booth could be created. Ask an administrator to check the booths table." };
+      } catch (error) {
+        return { account: null, error: error instanceof Error ? error.message : "Sign-up failed." };
+      }
+    },
+
+    async signIn(input: AccountSignInInput): Promise<AccountResult> {
+      try {
+        const session = await authRequest<AuthSession>("token?grant_type=password", {
+          email: input.email.trim().toLowerCase(),
+          password: input.password,
+        });
+        if (!session.access_token) return { account: null, error: "Email or password is wrong." };
+        const account = await adoptSession(session);
+        return account ? { account, error: null } : { account: null, error: "Signed in, but no booth could be loaded." };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Login failed.";
+        return { account: null, error: /invalid login credentials/i.test(message) ? "Email or password is wrong." : message };
+      }
+    },
+
+    async resolvePairCode(rawCode: string): Promise<PairCodeResolution> {
+      const code = normalizePairCode(rawCode);
+      if (code.length !== 6) {
+        return { code, position: "rear", account: null, verified: false, error: "A pair code is six characters." };
+      }
+      try {
+        // The directory view is anon-readable and deliberately excludes email and
+        // phone: confirming a code must not become a way to harvest contacts.
+        const response = await fetchImpl(
+          rest(`booth_directory?select=*&or=(pair_code.eq.${code},front_pair_code.eq.${code})&limit=1`),
+          { headers },
+        );
+        if (!response.ok) throw new Error(`directory ${response.status}`);
+        const rows = (await response.json()) as BoothRow[];
+        const booth = rows[0];
+        if (!booth) return { code, position: "rear", account: null, verified: false, error: null };
+        return {
+          code,
+          position: normalizePairCode(booth.front_pair_code) === code ? "front" : "rear",
+          account: {
+            id: booth.owner ?? booth.id,
+            name: booth.name ?? "Retroflex booth",
+            email: "",
+            phone: "",
+            city: booth.city ?? "",
+            pairCode: booth.pair_code,
+            frontPairCode: booth.front_pair_code ?? undefined,
+            createdAt: booth.created_at ?? new Date().toISOString(),
+            source: "supabase",
+          },
+          verified: true,
+          error: null,
+        };
+      } catch {
+        // Migration 0003 not applied, or offline: fall back to whatever this
+        // device already knows, and let the code pair over the sync channel.
+        return localFallback.accounts.resolvePairCode(code);
+      }
+    },
+
+    current(): TerminalAccount | null {
+      return readStoredSession()?.account ?? null;
+    },
+
+    async signOut(): Promise<void> {
+      const session = readStoredSession();
+      if (session?.refreshToken) {
+        await authRequest("logout", { refresh_token: session.refreshToken }, session.accessToken).catch(() => undefined);
+      }
+      writeStoredSession(null);
+    },
+  };
+
+  function toDeviceRow(binding: TerminalBinding, ownerId: string | null, withExtras: boolean): Record<string, unknown> {
+    return {
+      id: binding.id,
+      name: binding.deviceName,
+      pair_code: binding.pairCode,
+      position: binding.position,
+      last_seen: new Date().toISOString(),
+      owner: ownerId,
+      // 0003 columns. Omitted entirely when the project predates that
+      // migration, because PostgREST rejects unknown columns with a 400.
+      ...(withExtras
+        ? {
+            device_key: binding.deviceId,
+            account_email: binding.accountEmail ?? null,
+            assigned_at: new Date(binding.assignedAt).toISOString(),
+            origin: binding.origin,
+          }
+        : {}),
+    };
+  }
+
+  function fromDeviceRow(row: DeviceRow): TerminalBinding | null {
+    return normalizeTerminalBinding({
+      id: row.id,
+      deviceId: row.device_key ?? row.id,
+      deviceName: row.name,
+      pairCode: row.pair_code,
+      position: row.position === "front" ? "front" : "rear",
+      accountId: row.owner ?? null,
+      accountEmail: row.account_email ?? undefined,
+      origin: (row.origin ?? "console") as TerminalBinding["origin"],
+      assignedAt: row.assigned_at ? new Date(row.assigned_at).getTime() : Date.parse(row.last_seen ?? "") || Date.now(),
+      lastSeen: row.last_seen ? Date.parse(row.last_seen) : undefined,
+    });
+  }
+
+  const terminals: TerminalRegistry = {
+    async bind(input: TerminalBindingInput): Promise<TerminalBinding> {
+      const session = readStoredSession();
+      // Anonymous terminal (code login with no account on this device): keep the
+      // assignment local. The display still works — pairing is code-based.
+      if (!session) return localFallback.terminals.bind(input);
+
+      const binding: TerminalBinding = {
+        id: input.deviceId ? `term:${input.deviceId}:${input.position === "front" ? "front" : "rear"}` : `term:${Date.now()}`,
+        deviceId: input.deviceId,
+        deviceName: input.deviceName,
+        pairCode: normalizePairCode(input.pairCode),
+        position: input.position === "front" ? "front" : "rear",
+        accountId: input.accountId ?? session.account.id,
+        accountEmail: input.accountEmail ?? session.account.email,
+        origin: input.origin,
+        assignedAt: Date.now(),
+        lastSeen: Date.now(),
+      };
+
+      const upsert = async (withExtras: boolean) => {
+        const response = await fetchImpl(rest("devices?on_conflict=id"), {
+          method: "POST",
+          headers: {
+            Prefer: "resolution=merge-duplicates,return=representation",
+            ...headers,
+            Authorization: `Bearer ${session.accessToken}`,
+          },
+          body: JSON.stringify([toDeviceRow(binding, binding.accountId, withExtras)]),
+        });
+        return response.ok;
+      };
+
+      try {
+        const ok = (await upsert(true)) || (await upsert(false));
+        writeLocalBinding(binding);
+        if (!ok) return localFallback.terminals.bind(input);
+        return binding;
+      } catch {
+        return localFallback.terminals.bind(input);
+      }
+    },
+
+    async find(deviceId: string): Promise<TerminalBinding | null> {
+      const session = readStoredSession();
+      if (!session) return localFallback.terminals.find(deviceId);
+      try {
+        const response = await fetchImpl(
+          rest(`devices?select=*&or=(device_key.eq.${encodeURIComponent(deviceId)},id.eq.${encodeURIComponent(deviceId)})&limit=1`),
+          { headers: { ...headers, Authorization: `Bearer ${session.accessToken}` } },
+        );
+        if (!response.ok) throw new Error(`devices ${response.status}`);
+        const rows = (await response.json()) as DeviceRow[];
+        return rows[0] ? fromDeviceRow(rows[0]) : localFallback.terminals.find(deviceId);
+      } catch {
+        return localFallback.terminals.find(deviceId);
+      }
+    },
+
+    async list(accountId?: string): Promise<TerminalBinding[]> {
+      const session = readStoredSession();
+      if (!session) return localFallback.terminals.list(accountId);
+      try {
+        const filter = accountId ? `&owner=eq.${encodeURIComponent(accountId)}` : "";
+        const response = await fetchImpl(
+          rest(`devices?select=*&order=last_seen.desc${filter}`),
+          { headers: { ...headers, Authorization: `Bearer ${session.accessToken}` } },
+        );
+        if (!response.ok) throw new Error(`devices ${response.status}`);
+        const rows = (await response.json()) as DeviceRow[];
+        return rows.map(fromDeviceRow).filter((item): item is TerminalBinding => item !== null);
+      } catch {
+        return localFallback.terminals.list(accountId);
+      }
+    },
+
+    async touch(id: string): Promise<void> {
+      const session = readStoredSession();
+      if (!session) return localFallback.terminals.touch(id);
+      await fetchImpl(rest(`devices?id=eq.${encodeURIComponent(id)}`), {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal", ...headers, Authorization: `Bearer ${session.accessToken}` },
+        body: JSON.stringify({ last_seen: new Date().toISOString() }),
+      }).catch(() => undefined); // heartbeat is best-effort
+    },
+
+    async unbind(id: string): Promise<void> {
+      const session = readStoredSession();
+      await localFallback.terminals.unbind(id);
+      if (!session) return;
+      await fetchImpl(rest(`devices?id=eq.${encodeURIComponent(id)}`), {
+        method: "DELETE",
+        headers: { Prefer: "return=minimal", ...headers, Authorization: `Bearer ${session.accessToken}` },
+      }).catch(() => undefined);
+    },
+  };
+
   const info: BackendInfo = {
     kind: "supabase",
     label: "Supabase (shared)",
@@ -233,6 +635,8 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
     assets,
     manifest,
     events,
+    accounts,
+    terminals,
     subscribe(onChange: () => void, opts: RealtimeOptions = {}): Unsubscribe {
       // Polling on updated_at: no websocket dependency in the single-file build.
       // Realtime websocket (postgres_changes) is the documented upgrade in
