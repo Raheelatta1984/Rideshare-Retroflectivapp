@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { PLATFORMS, getPlatform } from "../lib/platforms";
-import { formatPair } from "../lib/id";
+import { formatPair, uid } from "../lib/id";
 import { useFleetChannels } from "../lib/sync";
 import { kph, useMotion } from "../lib/motion";
 import { Check } from "lucide-react";
@@ -1354,7 +1354,10 @@ function EnterpriseLab({ settings, saveSettings, recordActivity }: { settings: D
       return;
     }
     const campaign: CommercialCampaign = {
-      id: `cmp_${Date.now().toString(36)}`,
+      // next_id-backed uid (41-bit time | 13-bit shard | 10-bit counter) —
+      // a raw Date.now() suffix can collide when two campaigns are created
+      // in the same millisecond.
+      id: uid("cmp"),
       title: title.trim(),
       mediaType,
       assetDataUrl: assetDataUrl || undefined,

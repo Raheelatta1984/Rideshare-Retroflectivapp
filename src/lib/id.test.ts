@@ -37,6 +37,16 @@ describe("uid", () => {
     expect(uid("drv").split("_")[0]).toBe("drv");
     expect(uid("ride").split("_")[0]).toBe("ride");
   });
+
+  it("carries a sortable zero-padded next_id payload", () => {
+    const a = uid("drv");
+    const b = uid("drv");
+    const payload = a.slice("drv_".length);
+    expect(payload).toMatch(/^\d{20}$/);
+    // Minted in order → lexical order matches mint order (41-bit timestamp,
+    // 13-bit shard, 10-bit counter — see src/lib/nextId.ts).
+    expect(a.slice(4) < b.slice(4)).toBe(true);
+  });
 });
 
 describe("pairCode / formatPair / isValidPairCode", () => {

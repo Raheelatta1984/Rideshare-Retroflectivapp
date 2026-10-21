@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "shards": 8192,
+  "machines": [
+    {
+      "id": "img-a",
+      "baseUrl": "https://img-a.retroflex.example",
+      "shardRanges": [[0, 4095]],
+      "note": "primary image machine — first half of the 13-bit shard space"
+    },
+    {
+      "id": "img-b",
+      "baseUrl": "https://img-b.retroflex.example",
+      "shardRanges": [[4096, 8191]],
+      "note": "second half; moving a range here/a there is the whole rebalance"
+    }
+  ]
+}
