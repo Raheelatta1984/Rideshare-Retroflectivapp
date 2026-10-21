@@ -4,7 +4,7 @@
 
 A tablet on the inside of the rear glass. It sleeps. When Uber, DiDi or any rideshare assigns a passenger, it wakes. After the car is still for five seconds, it paints their name across the window.
 
-Frontend only. Driver booth, rides, display settings and phone↔tablet pairing run in the browser. No Neon. No database. Built for **GitHub Codespaces** and **GitHub Pages**.
+Frontend first: the driver booth, rides, display settings and phone↔tablet pairing all run in the browser, with on-device storage by default and an optional Supabase Postgres backend (PHASE-2.md). The server-side data plane — PgBouncer connection pooling (Neon `-pooler` or self-hosted), read replicas with a memcached read-through cache for the read-heavy paths, logical image shards with a machine map, and clash-proof 64-bit `next_id` minting — is documented in [INFRASTRUCTURE.md](INFRASTRUCTURE.md). Built for **GitHub Codespaces** and **GitHub Pages**.
 
 ## Live routes (after Codespaces or Pages is up)
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createLocalBackend } from "./local";
 import { createSupabaseBackend, readSupabaseConfig, dataUrlToBlob } from "./supabase";
+import { imageObjectPath } from "./imageShards";
 import { EventQueue } from "./queue";
 import type { Backend, CampaignEventRecord } from "./types";
 import type { CommercialCampaign } from "../../types";
@@ -201,7 +202,7 @@ describe("supabase backend — REST contract", () => {
     await expect(createSupabaseBackend(config, fetchImpl).campaigns.list()).rejects.toThrow(/Supabase 401/);
   });
 
-  it("uploads assets to the bucket path and returns a public URL", async () => {
+  it("uploads assets to the bucket's logical-shard path and returns a public URL", async () => {
     const { fetchImpl, calls } = fakeBackend(() => ({ body: {} }));
     const stored = await createSupabaseBackend(config, fetchImpl).assets.put({
       campaignId: "cmp_1",
@@ -209,8 +210,13 @@ describe("supabase backend — REST contract", () => {
       contentType: "image/png",
       data: new Blob(["x"], { type: "image/png" }),
     });
-    expect(calls[0].url).toContain("/storage/v1/object/campaigns/cmp_1/coffee.png");
-    expect(stored.url).toBe("https://demo.supabase.co/storage/v1/object/public/campaigns/cmp_1/coffee.png");
+    // Logical sharding: objects live under shard-NNNN/<campaign>/<file>, so
+    // the machine map can relocate whole shards (see src/lib/backend/imageShards.ts).
+    const expectedPath = imageObjectPath({ campaignId: "cmp_1", filename: "coffee.png" });
+    expect(expectedPath).toMatch(/^shard-\d{4}\/cmp_1\/coffee\.png$/);
+    expect(calls[0].url).toContain(`/storage/v1/object/campaigns/${expectedPath}`);
+    expect(stored.url).toBe(`https://demo.supabase.co/storage/v1/object/public/campaigns/${expectedPath}`);
+    expect(stored.path).toBe(expectedPath);
   });
 
   it("maps event rows back into the app shape", async () => {

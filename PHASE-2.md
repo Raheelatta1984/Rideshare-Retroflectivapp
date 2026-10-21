@@ -88,6 +88,12 @@ and the comment, and to expose the flag for reporting.
 
 ## Reliability notes
 
+> The server-side data plane that sits beside this REST adapter — PgBouncer
+> pooling for the Postgres connection, read replicas + memcached for the
+> read-heavy polls, logical image shards with a machine map, and 64-bit
+> `next_id` minting — is documented in [INFRASTRUCTURE.md](INFRASTRUCTURE.md)
+> (`server/`, migration `0004_next_id_image_shards.sql`).
+
 - The display can lose signal mid-trip: `EventQueue` batches, retries with a
   capped attempt count, and drops only what has exhausted retries (counted in
   `stats.dropped`). The queue is capped at 500 events.

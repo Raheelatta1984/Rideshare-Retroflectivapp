@@ -18,6 +18,7 @@ import type {
   Unsubscribe,
 } from "./types";
 import { issueManifest, verifyManifest } from "./manifest";
+import { imageObjectPath } from "./imageShards";
 import { blobToDataUrl, createLocalBackend } from "./local";
 import { normalizePairCode, pairCode as mintPairCode } from "../id";
 import { normalizeTerminalBinding, writeLocalBinding } from "../terminals";
@@ -152,7 +153,13 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
 
   const assets: AssetStore = {
     async put({ campaignId, filename, contentType, data }) {
-      const path = `${campaignId}/${filename}`;
+      // Logical sharding (src/lib/backend/imageShards.ts): the object key is
+      // hashed into the 13-bit shard space and stored under
+      // `shard-NNNN/<campaign>/<file>`, so uploads spread across directories
+      // and the server-side machine map can relocate whole shards without
+      // rehashing keys. Existing assets keep their old paths — `path` is
+      // stored per asset, and signedUrl/remove take it verbatim.
+      const path = imageObjectPath({ campaignId, filename });
       const body = typeof data === "string" ? dataUrlToBlob(data) : data;
       const response = await fetchImpl(`${config.url}/storage/v1/object/${config.bucket}/${path}`, {
         method: "POST",

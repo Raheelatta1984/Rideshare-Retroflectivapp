@@ -1,0 +1,68 @@
+# Local development stack for the Retroflex server data plane:
+#
+#   postgres:16   the database (stand-in for Neon or a self-hosted primary)
+#   pgbouncer     transaction-mode pooler in front of it (infra/pgbouncer/)
+#   memcached     read-through cache for the hot read paths
+#
+# This stack exists for developing/verifying `server/` locally. Production
+# uses Neon's hosted pooler (or your own PgBouncer) and a managed memcached —
+# see INFRASTRUCTURE.md. The browser app itself needs none of this: it runs
+# the local adapter or talks to Supabase over REST.
+#
+#   docker compose -f infra/docker-compose.yml up
+#
+# Endpoints after `up`:
+#   postgres  localhost:5432  (user retroflex / password retroflex / db retroflex)
+#   pgbouncer localhost:6543  (same credentials — point DATABASE_URL here)
+#   memcached localhost:11211
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: retroflex
+      POSTGRES_PASSWORD: retroflex
+      POSTGRES_DB: retroflex
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Auto-apply the schema on first boot (0001–0004).
+      - ../../supabase/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retroflex -d retroflex"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_USER: retroflex
+      DB_PASSWORD: retroflex
+      DB_NAME: retroflex
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 500
+      DEFAULT_POOL_SIZE: 25
+      MIN_POOL_SIZE: 5
+      QUERY_CACHE_SIZE: "0"
+      AUTH_TYPE: scram-sha-256
+    ports:
+      - "6543:6543"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+
+  memcached:
+    image: memcached:1.6-alpine
+    # 64 MB is plenty for campaign lists, terminal directories and asset
+    # metadata; raise -m with the fleet size.
+    command: ["memcached", "-m", "64", "-I", "1m"]
+    ports:
+      - "11211:11211"
+
+volumes:
+  pgdata:

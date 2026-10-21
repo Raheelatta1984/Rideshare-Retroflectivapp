@@ -1,14 +1,22 @@
 // Utility functions for generating unique IDs and pairing codes
 
+import { nextIdString } from "./nextId";
+
 /**
- * Generate a unique ID with a prefix
+ * Generate a unique ID with a prefix.
+ *
+ * Backed by `next_id` (src/lib/nextId.ts): a sortable 64-bit value laid out as
+ * 41 bits of millisecond timestamp | 13 bits of shard reference | 10 bits of
+ * per-millisecond counter. The old implementation (base36 timestamp + random
+ * suffix) could mint colliding ids when two calls landed in the same instant —
+ * the counter field removes that clash class, and the fixed-width decimal
+ * payload sorts lexicographically by mint time.
+ *
  * @param prefix - The prefix to add (e.g., 'drv' for driver, 'ride' for ride)
- * @returns A unique ID like 'drv_abc123xyz'
+ * @returns A unique ID like 'drv_00000198765432100042'
  */
 export function uid(prefix: string): string {
-  const timestamp = Date.now().toString(36); // Convert timestamp to base36
-  const randomPart = Math.random().toString(36).slice(2, 9); // Random alphanumeric
-  return `${prefix}_${timestamp}${randomPart}`;
+  return `${prefix}_${nextIdString()}`;
 }
 
 /**
