@@ -77,6 +77,24 @@ read  ──▶ memcached hit? ──▶ done
 - `createReadThroughCache()` adds JSON codec, TTLs, **single-flight** loading
   (a cold key under load triggers one database load, not one per request),
   and `bump()` for generation-stamped key spaces.
+- Campaign `get(id)` negative-caches empty query results for 30s (configurable
+  with `negativeTtlSeconds`); upsert/remove invalidates the item key. This
+  prevents repeated lookups for the same absent ID from hitting Postgres.
+- `server/cache/bloom.ts` provides a Bloom prefilter for an **optional complete
+  campaign-ID snapshot**. When supplied at data-plane startup, a definite
+  absent-ID result skips both cache and database; false positives merely fall
+  through to the normal lookup. Do not seed it from paginated/limited data.
+  Use it only when campaign IDs are exhaustive and all mutations go through
+  this store: upserts add IDs, while deletes leave safe false positives until
+  restart/reseed. External inserts require rebuilding the snapshot first.
+- `plane.rateLimiter.check(clientKey, limit, windowSeconds)` is an atomic,
+  shared fixed-window guard backed by memcached (`add`/`incr`), with a bounded
+  per-process fallback. Apply it in the HTTP/API handler before invoking DB
+  reads or writes; the current repository has no HTTP request server/middleware
+  to attach this automatically. Defaults are 120 requests per 60 seconds and
+  can be overridden with `RATE_LIMIT_MAX_REQUESTS` and
+  `RATE_LIMIT_WINDOW_SECONDS`. Derive `clientKey` from a trusted auth subject
+  or trusted proxy IP, never an arbitrary client-supplied header.
 - Writes bump `campaigns:list:gen` instead of trying to delete every list
   variant (memcached cannot delete by prefix): the next poll re-keys and
   re-loads once. `server/db/campaignStore.ts` is the worked example — 25
@@ -149,12 +167,22 @@ IMAGE_MACHINE_MAP=infra/image-machines.json
 ```
 
 ```ts
-import { createDataPlane } from "./server";
+import { createDataPlane, withRateLimit } from "./server";
 import pg from "pg";
 
-const plane = createDataPlane(process.env, { driver: pg, socketFactory: netSocketFactory });
+const plane = createDataPlane(process.env, {
+  driver: pg,
+  socketFactory: netSocketFactory,
+  knownCampaignIds: fullCampaignIdSnapshot, // only a complete, authoritative snapshot
+});
 plane.campaigns.list();          // cache → replica → primary
 plane.campaigns.upsert(row);     // primary → bump list generation
+const route = withRateLimit(handleRequest, {
+  limiter: plane.rateLimiter,
+  limit: plane.config.rateLimitMaxRequests,
+  windowSeconds: plane.config.rateLimitWindowSeconds,
+  identifier: trustedClientKey, // authenticated ID or proxy-validated IP
+}); // rejects with HTTP 429 before DB-backed handler work
 plane.images?.place("cmp_1/hero.png"); // shard → machine → URL
 ```
 

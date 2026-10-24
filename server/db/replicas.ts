@@ -34,7 +34,7 @@ export interface ReadRouterOptions {
 
 /** The slice of ReadThroughCache the router uses (structural — no hard import). */
 export interface ReadRouterCache {
-  getOrLoad<T>(key: string, loader: () => Promise<T>, ttlSeconds?: number): Promise<{ value: T; hit: boolean }>;
+  getOrLoad<T>(key: string, loader: () => Promise<T>, ttlSeconds?: number, ttlForValue?: (value: T) => number): Promise<{ value: T; hit: boolean }>;
   get<T>(key: string): Promise<T | undefined>;
   set<T>(key: string, value: T, ttlSeconds?: number): Promise<void>;
   bump(key: string, by?: number): Promise<number>;
@@ -45,6 +45,8 @@ export interface ReadOptions {
   /** Cache key — presence enables cache-aside for this read. */
   cacheKey?: string;
   ttlSeconds?: number;
+  /** Shorter TTL for an empty result, to avoid repeatedly querying absent rows. */
+  negativeTtlSeconds?: number;
   /** Skip the cache even when `cacheKey` is set (freshness-sensitive views). */
   bypassCache?: boolean;
   /** Route to the primary even though the statement is a read. */
@@ -166,6 +168,9 @@ export function createReadRouter(options: ReadRouterOptions): ReadRouter {
         readOptions.cacheKey,
         load,
         readOptions.ttlSeconds,
+        readOptions.negativeTtlSeconds === undefined
+          ? undefined
+          : (result) => result.rows.length === 0 ? readOptions.negativeTtlSeconds as number : readOptions.ttlSeconds ?? 60,
       );
       if (hit) {
         stats.cacheHits += 1;

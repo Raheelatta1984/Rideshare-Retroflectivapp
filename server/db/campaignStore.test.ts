@@ -73,6 +73,29 @@ describe("createCampaignStore read path", () => {
     expect(await cache.get("campaigns:item:cmp_1")).toBeUndefined();
   });
 
+  it("negative-caches absent IDs and bypasses DB for definite Bloom misses", async () => {
+    let dbReads = 0;
+    const primary = {
+      async query<R>(sql: string): Promise<QueryResult<R>> {
+        if (sql.includes("from campaigns")) dbReads += 1;
+        return { rows: [] as R[], rowCount: 0 };
+      },
+    };
+    const cache = createReadThroughCache({ client: createMemoryMemcached() });
+    const router = createReadRouter({ primary, cache });
+    const store = createCampaignStore({ router, knownCampaignIds: ["known-id"] });
+
+    expect(await store.get("not-in-snapshot")).toBeNull();
+    expect(dbReads).toBe(0);
+    expect(await store.get("known-id")).toBeNull();
+    expect(await store.get("known-id")).toBeNull();
+    expect(dbReads).toBe(1); // the second absent-row request hits negative cache
+
+    await store.upsert({ id: "created-id", title: "Created", payload: {}, approval_state: "draft" });
+    expect(await store.get("created-id")).toBeNull(); // upsert extended the Bloom filter
+    expect(dbReads).toBe(2);
+  });
+
   it("routes since-based polls through the same cache discipline", async () => {
     const { queries, primary, replica } = db();
     const cache = createReadThroughCache({ client: createMemoryMemcached() });

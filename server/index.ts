@@ -11,5 +11,7 @@ export * from "./db/pgbouncer";
 export * from "./db/replicas";
 export * from "./db/campaignStore";
 export * from "./cache/memcached";
+export * from "./cache/bloom";
+export * from "./limits/rateLimit";
 export * from "./images/machineMap";
 export * from "./config";

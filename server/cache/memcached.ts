@@ -275,7 +275,7 @@ export interface ReadThroughCacheStats {
 
 export interface ReadThroughCache {
   /** Cache-aside read with single-flight loader. */
-  getOrLoad<T>(key: string, loader: () => Promise<T>, ttlSeconds?: number): Promise<{ value: T; hit: boolean }>;
+  getOrLoad<T>(key: string, loader: () => Promise<T>, ttlSeconds?: number, ttlForValue?: (value: T) => number): Promise<{ value: T; hit: boolean }>;
   get<T>(key: string): Promise<T | undefined>;
   set<T>(key: string, value: T, ttlSeconds?: number): Promise<void>;
   /**
@@ -319,7 +319,12 @@ export function createReadThroughCache(options: ReadThroughCacheOptions = {}): R
   const namespaced = (key: string) => `${namespace}:${key}`;
 
   return {
-    async getOrLoad<T>(key: string, loader: () => Promise<T>, ttlSeconds = ttl): Promise<{ value: T; hit: boolean }> {
+    async getOrLoad<T>(
+      key: string,
+      loader: () => Promise<T>,
+      ttlSeconds = ttl,
+      ttlForValue?: (value: T) => number,
+    ): Promise<{ value: T; hit: boolean }> {
       const cached = await this.get<T>(key);
       if (cached !== undefined) {
         stats.hits += 1;
@@ -335,7 +340,7 @@ export function createReadThroughCache(options: ReadThroughCacheOptions = {}): R
       const load = (async () => {
         stats.loads += 1;
         const value = await loader();
-        await this.set(key, value, ttlSeconds);
+        await this.set(key, value, ttlForValue?.(value) ?? ttlSeconds);
         return value;
       })();
       inFlight.set(key, load);
