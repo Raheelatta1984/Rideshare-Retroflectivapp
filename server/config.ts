@@ -22,6 +22,8 @@ import type { ReadRouter } from "./db/replicas";
 import { createReadRouter } from "./db/replicas";
 import type { MemcachedClient, ReadThroughCache, SocketFactory } from "./cache/memcached";
 import { createMemcachedClient, createReadThroughCache } from "./cache/memcached";
+import type { RateLimiter } from "./limits/rateLimit";
+import { createRateLimiter } from "./limits/rateLimit";
 import type { CampaignStore } from "./db/campaignStore";
 import { createCampaignStore } from "./db/campaignStore";
 import type { ImagePlane } from "./images/machineMap";
@@ -43,6 +45,8 @@ export interface DataPlaneEnv {
   PG_MAX_CLIENT_CONNECTIONS?: string;
   PG_CHECKOUT_TIMEOUT_MS?: string;
   MEMCACHED_DEFAULT_TTL_SECONDS?: string;
+  RATE_LIMIT_MAX_REQUESTS?: string;
+  RATE_LIMIT_WINDOW_SECONDS?: string;
   [key: string]: string | undefined;
 }
 
@@ -51,6 +55,8 @@ export interface DataPlaneConfig {
   replicaUrls: string[];
   memcachedServers: string[];
   memcachedDefaultTtlSeconds: number;
+  rateLimitMaxRequests: number;
+  rateLimitWindowSeconds: number;
   machineMapPath?: string;
 }
 
@@ -91,6 +97,8 @@ export function readDataPlaneConfig(env: DataPlaneEnv): DataPlaneConfig {
       .map((entry) => entry.trim())
       .filter(Boolean),
     memcachedDefaultTtlSeconds: int(env.MEMCACHED_DEFAULT_TTL_SECONDS, 60),
+    rateLimitMaxRequests: Math.max(1, int(env.RATE_LIMIT_MAX_REQUESTS, 120)),
+    rateLimitWindowSeconds: Math.max(1, int(env.RATE_LIMIT_WINDOW_SECONDS, 60)),
     machineMapPath: env.IMAGE_MACHINE_MAP,
   };
 }
@@ -104,6 +112,10 @@ export interface DataPlaneDeps {
   replicas?: Queryable[];
   /** Pre-built cache (tests); otherwise built from config memcached servers. */
   cache?: ReadThroughCache | null;
+  /** Complete snapshot only: enables a safe Bloom prefilter for campaign.get(). */
+  knownCampaignIds?: Iterable<string>;
+  /** Optional injected limiter (tests/custom backends). */
+  rateLimiter?: RateLimiter;
 }
 
 export interface DataPlane {
@@ -113,6 +125,8 @@ export interface DataPlane {
   router: ReadRouter;
   /** Campaign reads/writes with generation-stamped list caching. */
   campaigns: CampaignStore;
+  /** Apply before DB-backed request handlers; shared when memcached is configured. */
+  rateLimiter: RateLimiter;
   /** Image logical shards → machine map placements. */
   images?: ImagePlane;
   cache: ReadThroughCache;
@@ -150,11 +164,12 @@ export function createDataPlane(env: DataPlaneEnv, deps: DataPlaneDeps): DataPla
     cache: effectiveCache,
   });
 
-  const campaigns = createCampaignStore({ router });
+  const campaigns = createCampaignStore({ router, knownCampaignIds: deps.knownCampaignIds });
+  const rateLimiter = deps.rateLimiter ?? createRateLimiter({ client: memcached ?? null });
 
   const images = config.machineMapPath ? createImagePlane(loadMachineMap(config.machineMapPath)) : undefined;
 
-  return { primaryPool, router, campaigns, images, cache: effectiveCache, memcached, config };
+  return { primaryPool, router, campaigns, rateLimiter, images, cache: effectiveCache, memcached, config };
 }
 
 export { isPoolerUrl, toPoolerUrl };

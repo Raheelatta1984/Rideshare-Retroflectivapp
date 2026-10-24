@@ -17,6 +17,7 @@
 
 import type { QueryResult } from "./types";
 import type { ReadRouter } from "./replicas";
+import { createBloomFilter } from "../cache/bloom";
 
 export interface CampaignRow {
   id: string;
@@ -44,6 +45,14 @@ export interface CampaignStoreOptions {
   router: ReadRouter;
   /** List-cache TTL in seconds (default 15s — displays poll roughly this fast). */
   listTtlSeconds?: number;
+  /** TTL for cached not-found lookups (default 30s). Writes invalidate the key. */
+  negativeTtlSeconds?: number;
+  /**
+   * Optional COMPLETE campaign-ID snapshot for a Bloom prefilter. A definite
+   * miss avoids both cache and database access. Omit for partial/limited lists;
+   * upsert() adds IDs, while removes intentionally leave safe false positives.
+   */
+  knownCampaignIds?: Iterable<string>;
   clock?: () => number;
 }
 
@@ -56,6 +65,11 @@ export function createCampaignStore(options: CampaignStoreOptions): CampaignStor
   const listTtl = options.listTtlSeconds ?? 15;
   const clock = options.clock ?? Date.now;
   const cache = router.cache;
+  const knownIds = options.knownCampaignIds ? Array.from(options.knownCampaignIds) : undefined;
+  const knownIdsFilter = knownIds
+    ? createBloomFilter({ expectedItems: Math.max(1, knownIds.length) })
+    : undefined;
+  knownIds?.forEach((id) => knownIdsFilter?.add(id));
 
   async function listKey(query: CampaignListQuery): Promise<string> {
     const gen = cache ? ((await cache.get<number>(LIST_GEN_KEY)) ?? 0) : 0;
@@ -85,10 +99,18 @@ export function createCampaignStore(options: CampaignStoreOptions): CampaignStor
     },
 
     async get(id: string): Promise<CampaignRow | null> {
+      // A Bloom negative is definitive only because this filter is opt-in and
+      // seeded from a complete snapshot; positives still take the normal
+      // cache/replica path. New IDs are inserted after successful upserts.
+      if (knownIdsFilter && !knownIdsFilter.mightContain(id)) return null;
       const result = await router.read<CampaignRow>(
         "select id, title, payload, approval_state, compliance_mode, updated_at from campaigns where id = $1 limit 1",
         [id],
-        { cacheKey: itemKeyFor(id), ttlSeconds: listTtl },
+        {
+          cacheKey: itemKeyFor(id),
+          ttlSeconds: listTtl,
+          negativeTtlSeconds: Math.max(1, options.negativeTtlSeconds ?? 30),
+        },
       );
       return result.rows[0] ?? null;
     },
@@ -116,6 +138,7 @@ export function createCampaignStore(options: CampaignStoreOptions): CampaignStor
         // deleted outright because single-key invalidation is exact.
         { cacheKeys: [itemKeyFor(row.id)], bumpKeys: [LIST_GEN_KEY] },
       );
+      knownIdsFilter?.add(row.id);
     },
 
     async remove(id: string): Promise<void> {

@@ -27,6 +27,8 @@ describe("readDataPlaneConfig", () => {
     expect(config.replicaUrls).toHaveLength(2);
     expect(config.memcachedServers).toEqual(["mc-a:11211", "mc-b:11211"]);
     expect(config.primary.settings.poolMode).toBe("transaction");
+    expect(config.rateLimitMaxRequests).toBe(120);
+    expect(config.rateLimitWindowSeconds).toBe(60);
   });
 
   it("parses pool sizing overrides", () => {
@@ -35,10 +37,14 @@ describe("readDataPlaneConfig", () => {
       PG_POOL_MODE: "session",
       PG_MAX_CLIENT_CONNECTIONS: "4",
       PG_DEFAULT_POOL_SIZE: "10",
+      RATE_LIMIT_MAX_REQUESTS: "30",
+      RATE_LIMIT_WINDOW_SECONDS: "15",
     });
     expect(config.primary.settings.poolMode).toBe("session");
     expect(config.primary.settings.maxClientConnections).toBe(4);
     expect(config.primary.settings.defaultPoolSize).toBe(10);
+    expect(config.rateLimitMaxRequests).toBe(30);
+    expect(config.rateLimitWindowSeconds).toBe(15);
   });
 });
 
