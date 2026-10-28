@@ -186,6 +186,40 @@ function fakeSupabase(handler: (url: string, init?: RequestInit) => { status?: n
 }
 
 describe("supabase accounts", () => {
+  it("purges legacy tokens and never persists new sessions, even with legacy config", async () => {
+    localStorage.setItem("rf:backend:supabase-session", JSON.stringify({ accessToken: "old-token", refreshToken: "old-refresh" }));
+    vi.stubEnv("VITE_SUPABASE_SESSION_PERSISTENCE", "localStorage");
+    try {
+      const { fetchImpl } = fakeSupabase((url, init) => {
+        if (url.includes("/auth/v1/token")) return { body: session };
+        if (url.includes("booths")) return { body: init?.method === "POST" ? [boothRow] : [] };
+        return { body: [] };
+      });
+      const backend = createSupabaseBackend(config, fetchImpl);
+      expect(localStorage.getItem("rf:backend:supabase-session")).toBeNull();
+      await backend.accounts.signIn({ email: "driver@retroflex.app", password: "demo12345" });
+      expect(backend.accounts.current()?.id).toBe("usr_1");
+      expect(JSON.stringify(localStorage)).not.toContain("tok_1");
+      expect(JSON.stringify(localStorage)).not.toContain("ref_1");
+      expect(createSupabaseBackend(config, fetchImpl).accounts.current()).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("clears the session before the logout network request finishes", async () => {
+    const { fetchImpl } = fakeSupabase((url, init) => {
+      if (url.includes("/auth/v1/token")) return { body: session };
+      if (url.includes("booths")) return { body: init?.method === "POST" ? [boothRow] : [] };
+      return { body: [] };
+    });
+    const backend = createSupabaseBackend(config, fetchImpl);
+    await backend.accounts.signIn({ email: "driver@retroflex.app", password: "demo12345" });
+    const logout = backend.accounts.signOut();
+    expect(backend.accounts.current()).toBeNull();
+    await logout;
+  });
+
   it("signs up through Supabase Auth, then mints a booth with fresh codes", async () => {
     const { fetchImpl, calls } = fakeSupabase((url, init) => {
       if (url.includes("/auth/v1/signup")) return { body: session };
@@ -194,7 +228,8 @@ describe("supabase accounts", () => {
       return { body: [] };
     });
 
-    const result = await createSupabaseBackend(config, fetchImpl).accounts.signUp(signUpInput);
+    const backend = createSupabaseBackend(config, fetchImpl);
+    const result = await backend.accounts.signUp(signUpInput);
 
     expect(result.error).toBeNull();
     expect(result.account).toMatchObject({ id: "usr_1", pairCode: "7K2M9Q", frontPairCode: "FR0NT1", source: "supabase" });
@@ -204,7 +239,8 @@ describe("supabase accounts", () => {
     // resolvable from the driver's phone later.
     const insert = calls.find((call) => call.url.includes("/rest/v1/booths") && call.method === "POST");
     expect(insert?.body).toContain("pair_code");
-    expect(createSupabaseBackend(config, fetchImpl).accounts.current()?.email).toBe("driver@retroflex.app");
+    expect(backend.accounts.current()?.email).toBe("driver@retroflex.app");
+    expect(createSupabaseBackend(config, fetchImpl).accounts.current()).toBeNull();
   });
 
   it("reports an email that is already registered", async () => {

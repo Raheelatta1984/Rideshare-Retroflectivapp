@@ -44,9 +44,13 @@ try {
   process.exit(2);
 }
 
-if (!report.vulnerabilities || Object.keys(report.vulnerabilities).length === 0) {
-  console.log("audit: no advisories reported");
-  process.exit(0);
+// npm audit also emits JSON for registry and configuration failures. Never
+// treat an error response or missing report as a clean dependency scan.
+if (report.error || !report.vulnerabilities || typeof report.vulnerabilities !== "object" || result.error || ![0, 1].includes(result.status) || Array.isArray(report.vulnerabilities)) {
+  console.error("audit: npm audit did not return a valid vulnerability report");
+  if (report.error?.summary) console.error(report.error.summary);
+  if (result.error) console.error(result.error.message);
+  process.exit(2);
 }
 
 const today = new Date().toISOString().slice(0, 10);
