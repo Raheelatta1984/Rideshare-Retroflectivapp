@@ -235,6 +235,99 @@ export async function revokeUserSessions(client, email) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Pre-0005 rows
+ * ------------------------------------------------------------------ */
+
+/**
+ * Campaigns created before 0005, which therefore have no owner.
+ *
+ * They are not broken — approved ones still show on a display, and a reviewer
+ * can still manage them — but nobody can edit their own work until they are
+ * assigned. Listing them is a deploy step, not a debugging aid.
+ */
+export async function listOwnerlessCampaigns(client) {
+  const q = asQueryable(client);
+  const result = await q.query(
+    `select id, title, approval_state, created_at
+       from public.campaigns
+      where owner is null
+      order by id asc`,
+  );
+  return result?.rows ?? [];
+}
+
+/**
+ * Assign ownerless campaigns to one account.
+ *
+ * `owner` is an email (resolved through `auth.users`) or a UUID. `ids` limits
+ * the assignment; omitting it assigns every ownerless campaign — which is what
+ * a single-booth deployment wants, and is refused when more than one account
+ * has ever signed in, because guessing is how the wrong person gets someone
+ * else's campaign.
+ *
+ * Runs on a direct connection as the `postgres` role, which is why it can write
+ * rows the browser roles cannot see.
+ */
+export async function assignLegacyOwners(client, options) {
+  const q = asQueryable(client);
+  const ids = Array.isArray(options.ids) ? options.ids.filter(Boolean) : null;
+  const ownerInput = String(options.owner ?? "").trim();
+
+  if (!ownerInput) return { ok: false, reason: "no-owner", message: "an owner is required (an email address or a UUID)" };
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerInput);
+  const owner = isUuid
+    ? { id: ownerInput, email: null }
+    : await findUserId(q, ownerInput);
+  if (!owner) {
+    return {
+      ok: false,
+      reason: "no-such-user",
+      message: `No Supabase auth user with the address ${ownerInput}. Create or sign up that account first, then re-run.`,
+    };
+  }
+
+  const pending = await listOwnerlessCampaigns(q);
+  if (pending.length === 0) return { ok: true, assigned: 0, ids: [], reason: "nothing-to-do" };
+
+  const scope = ids ? pending.filter((row) => ids.includes(String(row.id))) : pending;
+
+  if (!ids && !options.allowAll && pending.length > 0) {
+    const accounts = await scalar(q, "select count(*)::int from auth.users");
+    if (Number(accounts) > 1) {
+      return {
+        ok: false,
+        reason: "ambiguous",
+        message:
+          `${pending.length} campaign(s) have no owner and more than one account exists. ` +
+          `Name them explicitly with --ids ${pending.map((row) => row.id).slice(0, 3).join(",")}… ` +
+          "or pass --all if every one of them belongs to this account.",
+        pending: pending.map((row) => String(row.id)),
+      };
+    }
+  }
+
+  if (scope.length === 0) {
+    return { ok: false, reason: "no-match", message: "None of the requested ids is an ownerless campaign.", pending: pending.map((row) => String(row.id)) };
+  }
+
+  const assigned = [];
+  for (const row of scope) {
+    const result = await q.query("update public.campaigns set owner = $1 where id = $2 and owner is null returning id", [
+      String(owner.id),
+      String(row.id),
+    ]);
+    if ((result?.rowCount ?? result?.rows?.length ?? 0) > 0) assigned.push(String(row.id));
+  }
+
+  // Approved rows are read-only for their owner by design; say so rather than
+  // letting it look like the assignment half-worked.
+  const frozen = scope.filter((row) => row.approval_state === "approved").map((row) => String(row.id));
+
+  return { ok: true, assigned: assigned.length, ids: assigned, ownerId: String(owner.id), frozen };
+}
+
+/* ------------------------------------------------------------------ *
  * Admin API transport (no database password required)
  * ------------------------------------------------------------------ */
 

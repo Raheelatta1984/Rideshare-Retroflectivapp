@@ -18,7 +18,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyHardening,
+  assignLegacyOwners,
   grantReviewer,
+  listOwnerlessCampaigns,
   revokeUserSessions,
   verifyHardening,
 } from "../../scripts/db-hardening.mjs";
@@ -305,6 +307,106 @@ describe("granting the reviewer role", () => {
     const result = await revokeUserSessions(db, "a@example.com");
     expect(result).toMatchObject({ ok: true, revoked: 0 });
     expect(result.note).toMatch(/does not exist/);
+  });
+});
+
+describe("assigning pre-0005 rows", () => {
+  it("lists every ownerless campaign", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+
+    const pending = await listOwnerlessCampaigns(db);
+    expect(pending.map((row) => row.id)).toEqual(["camp_a_draft", "camp_a_pending", "camp_approved", "camp_b_draft"]);
+    expect(pending.every((row) => row.title)).toBe(true);
+  });
+
+  it("assigns them all when only one account exists", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    await rows(db, "delete from auth.users where id <> $1", [DRIVER_A]);
+
+    const result = await assignLegacyOwners(db, { owner: "a@example.com" });
+    expect(result).toMatchObject({ ok: true, assigned: 4, ownerId: DRIVER_A });
+    expect(await listOwnerlessCampaigns(db)).toHaveLength(0);
+
+    // …and the driver can now see their own campaigns.
+    const owned = await as(db, driverA, () => rows(db, "select id from public.campaigns order by id"));
+    expect(owned).toHaveLength(4);
+  });
+
+  it("refuses to guess when several accounts exist", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+
+    const result = await assignLegacyOwners(db, { owner: "a@example.com" });
+    expect(result).toMatchObject({ ok: false, reason: "ambiguous" });
+    expect(result.message).toMatch(/--ids/);
+    // Nothing was assigned by the refusal.
+    expect(await listOwnerlessCampaigns(db)).toHaveLength(4);
+  });
+
+  it("assigns an explicit subset, and only that subset", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+
+    const result = await assignLegacyOwners(db, { owner: "b@example.com", ids: ["camp_b_draft", "camp_a_pending"] });
+    expect(result).toMatchObject({ ok: true, assigned: 2, ownerId: "22222222-2222-2222-2222-222222222222" });
+    expect(result.ids?.sort()).toEqual(["camp_a_pending", "camp_b_draft"]);
+
+    const remaining = await listOwnerlessCampaigns(db);
+    expect(remaining.map((row) => row.id)).toEqual(["camp_a_draft", "camp_approved"]);
+  });
+
+  it("accepts a UUID as well as an address", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    const result = await assignLegacyOwners(db, { owner: "22222222-2222-2222-2222-222222222222", ids: ["camp_a_draft"] });
+    expect(result).toMatchObject({ ok: true, assigned: 1, ownerId: "22222222-2222-2222-2222-222222222222" });
+  });
+
+  it("says an approved row is still going to be read-only for its owner", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    const result = await assignLegacyOwners(db, { owner: "a@example.com", ids: ["camp_approved"] });
+    expect(result).toMatchObject({ ok: true, assigned: 1, frozen: ["camp_approved"] });
+  });
+
+  it("reports an address that has never signed up", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    const result = await assignLegacyOwners(db, { owner: "tic.raheel@gmail.com" });
+    expect(result).toMatchObject({ ok: false, reason: "no-such-user" });
+    expect(result.message).toContain("tic.raheel@gmail.com");
+  });
+
+  it("is safe to run twice", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    await rows(db, "delete from auth.users where id <> $1", [DRIVER_A]);
+
+    expect(await assignLegacyOwners(db, { owner: "a@example.com" })).toMatchObject({ ok: true, assigned: 4 });
+    expect(await assignLegacyOwners(db, { owner: "a@example.com" })).toMatchObject({ ok: true, assigned: 0, reason: "nothing-to-do" });
+  });
+
+  it("never steals a row that already has an owner", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    await as(db, reviewer, () => rows(db, "update public.campaigns set owner = $1 where id = 'camp_b_draft'", ["22222222-2222-2222-2222-222222222222"]));
+
+    const result = await assignLegacyOwners(db, { owner: "a@example.com", ids: ["camp_b_draft"] });
+    expect(result).toMatchObject({ ok: false, reason: "no-match" });
+
+    const [row] = await rows<{ owner: string }>(db, "select owner from public.campaigns where id = 'camp_b_draft'");
+    expect(row.owner).toBe("22222222-2222-2222-2222-222222222222");
+  });
+
+  it("does not change what a display can see", async () => {
+    const { db } = await legacyDb();
+    await applyHardening(db);
+    const before = await as(db, anon, () => rows(db, "select id from public.public_campaigns"));
+    await assignLegacyOwners(db, { owner: "a@example.com" });
+    const after = await as(db, anon, () => rows(db, "select id from public.public_campaigns"));
+    expect(after.map((row) => row.id)).toEqual(before.map((row) => row.id));
   });
 });
 

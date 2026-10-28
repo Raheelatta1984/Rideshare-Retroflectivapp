@@ -43,13 +43,14 @@ push to `main` and every pull request.
 | `server/bff/*.test.ts` | Session service: cookie attributes (`__Host-`, `HttpOnly`, `Secure`, `SameSite`), CSRF binding and rotation, origin checks, idle/absolute expiry, revocation, token sealing at rest, rate limits, static-file traversal |
 | `src/lib/backend/bff.test.ts` | The browser adapter: `credentials: include`, CSRF bootstrap, no token in any payload, 401 clears the cached account |
 | `supabase/tests/rls.test.ts` | Every policy on a real PostgreSQL, as `anon`, two drivers and a reviewer — reads, writes, storage, rollups |
-| `supabase/tests/hardening.test.ts` | Applying 0005+0006 **together**: no anonymous read gap, rollback when 0006 fails, post-condition failures abort the deploy, and the reviewer grant (including that a stale token still cannot approve) |
+| `supabase/tests/hardening.test.ts` | Applying 0005+0006 **together**: no anonymous read gap, rollback when 0006 fails, post-condition failures abort the deploy, the reviewer grant (including that a stale token still cannot approve), and adopting pre-0005 rows (never steals an existing owner, refuses to guess across accounts) |
 | `scripts/sql-policy-audit.test.ts` | Static guard: no permissive policy, no write grant to `anon`, `search_path` pinned on every definer function |
 | `scripts/db-hardening.test.ts` | The Admin API transport of the reviewer grant: merges `app_metadata`, idempotent, honest about a missing account |
 | `scripts/bff-smoke.mjs` | 33 checks over real HTTP on the built bundle, plus "no upstream token in any response" |
 
-The deploy steps themselves are scripted: `npm run db:harden` and
-`npm run auth:grant-admin` — see [docs/security/rls-model.md](docs/security/rls-model.md).
+The deploy steps themselves are scripted: `npm run db:harden`,
+`npm run auth:grant-admin` and `npm run db:assign-owners` — see
+[docs/security/rls-model.md](docs/security/rls-model.md).
 
 `npm run smoke` is separate: jsdom cannot execute the ES-module bundle, so it
 checks the **artifact** instead — no CRA-style `process.env`, no dead relay host,

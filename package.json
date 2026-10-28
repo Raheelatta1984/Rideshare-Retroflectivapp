@@ -22,6 +22,7 @@
     "security:rotate": "node scripts/rotate-admin-credential.mjs",
     "db:harden": "node scripts/apply-hardening.mjs",
     "auth:grant-admin": "node scripts/grant-admin.mjs",
+    "db:assign-owners": "node scripts/assign-legacy-owners.mjs",
     "security:storage": "vitest run src/lib/security/storage-guard.test.ts"
   },
   "dependencies": {

@@ -137,6 +137,39 @@ These are deliberate and each one closes a hole:
 update public.campaigns set owner = '<uuid>' where id = '<campaign id>';
 ```
 
+## Residual: consent metadata of approved campaigns
+
+Anonymous callers get `public_campaigns`, where each consent record is redacted
+to `{confirmed, signerName: "on file", agreementReference: "on file"}`. That
+redaction does **not** hold for signed-in accounts: `campaigns_own_read` allows
+`owner = auth.uid() or approval_state = 'approved' or is_admin()`, so any account
+that signs in can read the raw payload — signer names, emails and agreement
+references — of every approved campaign.
+
+Pinned by test (`supabase/tests/rls.test.ts`, "the consent-redaction boundary"),
+so it cannot widen silently. Severity depends entirely on who can sign up:
+
+* **Closed signup** (invite/booth creation only): small — the exposure is within
+  the operator's own people.
+* **Open signup**: effectively public. Anyone who registers reads every approved
+  campaign's consent metadata, which is the personal data of the people who
+  signed those agreements.
+
+Why it was not closed in this change: the `approved` branch exists so a
+signed-in terminal knows which campaigns are live. Removing it without moving
+that read to `public_campaigns` first would blank the glass on any signed-in
+display — a field outage, and not something this repository can verify
+end-to-end.
+
+To close it, in this order:
+
+1. Point the display playlist read at `public_campaigns` for signed-in sessions
+   too (both adapters — `campaignsRelation()` in
+   `src/lib/backend/supabase.ts`, and `table` in `server/bff/router.ts`), and
+   confirm a signed-in display still plays an approved campaign.
+2. Then narrow the policy to `owner = auth.uid() or public.is_admin()`.
+3. Update the pinned test to assert refusal, and delete this section.
+
 ## Deployment order
 
 `0005` revokes every anonymous privilege on `public.campaigns`; `0006` creates
@@ -210,13 +243,43 @@ select public.grant_admin('tic.raheel@gmail.com');
 
 ### Reassign pre-0005 rows
 
-Rows created before this migration have `owner = null`; they stay publicly
-visible when approved and are otherwise reviewer-managed. Assign them while you
-are thinking about it:
+Rows created before this migration have `owner = null`. They are not lost —
+approved ones still display and a reviewer can still manage them — but nobody
+can edit their own work, and the driver console does not list them. Scripted
+because it is easy to get wrong, and the wrong account silently inherits
+somebody else's campaign:
 
-```sql
-update public.campaigns set owner = '<uuid>' where id = '<campaign id>';
+```bash
+# What is orphaned? (read-only)
+DATABASE_URL='postgres://…' npm run db:assign-owners -- --list
+
+# One booth, one account: assign everything. Refused if more than one account
+# has ever signed in, because that is where the guessing starts.
+DATABASE_URL='postgres://…' npm run db:assign-owners -- --owner tic.raheel@gmail.com --apply
+
+# Several accounts: name the rows
+DATABASE_URL='postgres://…' npm run db:assign-owners -- \
+  --owner tic.raheel@gmail.com --ids camp_abc123,camp_def456 --apply
 ```
+
+It only ever touches rows whose `owner is null` (so re-running cannot steal an
+assignment), accepts an email or a UUID, prints the approved rows it assigned
+(those stay read-only for their owner, by design — a reviewer must reopen one to
+edit it), and ends by reporting anything still orphaned.
+
+### One command, in order
+
+```bash
+export DATABASE_URL='postgres://postgres:<password>@db.<project>.supabase.co:5432/postgres'
+
+npm run db:harden -- --dry-run                                   # 1. prove the DDL, change nothing
+npm run db:harden -- --apply --grant-admin tic.raheel@gmail.com --revoke-sessions   # 2. migrate + role
+npm run db:assign-owners -- --list                               # 3. see what is orphaned
+npm run db:assign-owners -- --owner tic.raheel@gmail.com --apply # 4. adopt it (refuses if ambiguous)
+```
+
+Then sign in (with the BFF the next approve/reject picks the role up anyway) and
+deploy this build.
 
 ### Then
 
@@ -245,11 +308,11 @@ select to_regclass('public.booth_directory');   -- expected: null
 ```
 
 Reproduce those checks in CI with `npm run security:rls`, which applies
-`0001`–`0007` to a real PostgreSQL (PGlite, WASM) and asserts 34 behaviours as
+`0001`–`0007` to a real PostgreSQL (PGlite, WASM) and asserts 37 behaviours as
 `anon`, two different drivers and a reviewer. Two more suites guard the deploy
 itself:
 
-* `supabase/tests/hardening.test.ts` (20 assertions) starts from the legacy
+* `supabase/tests/hardening.test.ts` (30 assertions) starts from the legacy
   state, applies `0005 + 0006` through the same module the CLI uses, and proves
   the pairing is atomic: a failure in `0006` rolls `0005` back, and a migration
   that leaves no anonymous read path fails its own verification. It also covers
