@@ -139,13 +139,89 @@ update public.campaigns set owner = '<uuid>' where id = '<campaign id>';
 
 ## Deployment order
 
-1. Apply `0005` and `0006` together — `0006` creates the projection the client
-   needs after `0005` revokes the table grants. Between the two, an anonymous
-   display shows nothing (safe failure, not a leak).
-2. Grant the reviewer role to the account that runs approvals, then have it sign
-   in again.
-3. Deploy the app build that reads `public_campaigns` (this repository).
-4. Verify with the queries below, not with the dashboard.
+`0005` revokes every anonymous privilege on `public.campaigns`; `0006` creates
+`public.public_campaigns`, the only replacement. **They must be applied in one
+transaction.** Separately, a display that polls in between gets an empty
+playlist (a safe failure — it never leaks a draft — but an outage all the same),
+and if `0006` fails on its own the app is left with no anonymous read path at
+all. `scripts/apply-hardening.mjs` exists to make that impossible.
+
+```bash
+# 1. Dry run: applies 0005 + 0006 inside a transaction, runs the post-conditions,
+#    then rolls back. Nothing is changed; the DDL is still proven valid.
+DATABASE_URL='postgres://postgres:<password>@db.<project>.supabase.co:5432/postgres' \
+  npm run db:harden -- --dry-run
+
+# 2. Apply, and grant the reviewer role in the same run. --revoke-sessions ends
+#    that account's stored BFF sessions so the next request forces a fresh login.
+DATABASE_URL='postgres://…' \
+  npm run db:harden -- --apply --grant-admin tic.raheel@gmail.com --revoke-sessions
+
+# 3. The BFF uses BFF_SESSION_STORE=postgres (it needs public.bff_sessions):
+DATABASE_URL='postgres://…' npm run db:harden -- --apply --include-session-store
+
+# 4. Sign that account in again. The role lives in the JWT: a browser-held token
+#    from before the grant cannot carry it. (With the BFF the next approve/reject
+#    reissues the token and picks the role up automatically; a static-only
+#    deployment has no such path, so re-login there.)
+```
+
+`DATABASE_URL` must be a **direct/session connection with DDL rights** (the
+`postgres` role), not the anon key and not a transaction-mode pooler.
+
+The script fails the deploy unless every post-condition holds, and it prints
+each one:
+
+```
+✓ applied 0005_tenant_isolation.sql, 0006_public_projections.sql in one transaction
+  ✓ public_campaigns projection exists
+  ✓ legacy booth_directory view is gone
+  ✓ anon cannot read campaigns
+  ✓ anon cannot read campaign_events
+  ✓ anon can read the projection
+  ✓ no permissive policy remains on tenant tables
+  ✓ owner defaults to auth.uid()
+  ✓ grant_admin is not callable by browser roles
+```
+
+### If the grant fails: "no Supabase auth user with that address"
+
+That is the normal first-run outcome when the address has never signed up in
+this project — the leaked administrator password belonged to an email account,
+not necessarily to a `auth.users` row. Create or sign up the account, then re-run
+just the grant (it is idempotent):
+
+```bash
+# SQL transport (needs DATABASE_URL):
+DATABASE_URL='postgres://…' npm run auth:grant-admin -- --email tic.raheel@gmail.com --apply --revoke-sessions
+
+# Admin API transport (needs only the service-role key, no DB password):
+SUPABASE_URL='https://<project>.supabase.co' SUPABASE_SERVICE_ROLE_KEY='…' \
+  npm run auth:grant-admin -- --email tic.raheel@gmail.com --via api --apply --revoke-sessions
+```
+
+Both transports merge `app_metadata` rather than replacing it, and both are
+idempotent. Neither is reachable from the browser: `public.grant_admin` is
+revoked from `anon` and `authenticated`, and the equivalent SQL is
+
+```sql
+select public.grant_admin('tic.raheel@gmail.com');
+```
+
+### Reassign pre-0005 rows
+
+Rows created before this migration have `owner = null`; they stay publicly
+visible when approved and are otherwise reviewer-managed. Assign them while you
+are thinking about it:
+
+```sql
+update public.campaigns set owner = '<uuid>' where id = '<campaign id>';
+```
+
+### Then
+
+5. Deploy the app build that reads `public_campaigns` (this repository).
+6. Verify with the queries below, not with the dashboard.
 
 ## Verifying a live project
 
@@ -169,8 +245,16 @@ select to_regclass('public.booth_directory');   -- expected: null
 ```
 
 Reproduce those checks in CI with `npm run security:rls`, which applies
-`0001`–`0006` to a real PostgreSQL (PGlite, WASM) and asserts 33 behaviours as
-`anon`, two different drivers and a reviewer. The static migration audit
-(`scripts/sql-policy-audit.test.ts`) fails the build if a later migration
-re-introduces a permissive policy or forgets a `search_path` on a definer
-function.
+`0001`–`0007` to a real PostgreSQL (PGlite, WASM) and asserts 34 behaviours as
+`anon`, two different drivers and a reviewer. Two more suites guard the deploy
+itself:
+
+* `supabase/tests/hardening.test.ts` (20 assertions) starts from the legacy
+  state, applies `0005 + 0006` through the same module the CLI uses, and proves
+  the pairing is atomic: a failure in `0006` rolls `0005` back, and a migration
+  that leaves no anonymous read path fails its own verification. It also covers
+  the reviewer grant — including that a stale token still cannot approve, which
+  is why the runbook insists on signing in again.
+* `scripts/sql-policy-audit.test.ts` fails the build if a later migration
+  re-introduces a permissive policy, grants a write privilege to `anon`, or
+  forgets a `search_path` on a definer function.

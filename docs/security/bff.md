@@ -84,6 +84,14 @@ layer, not a replacement. The service-role key is used only by
 They are logged server-side and replaced with a fixed vocabulary
 (`Email or password is wrong.`, `The campaign service is unavailable.`).
 
+**Reviewer role freshness.** The reviewer claim lives in the upstream access
+token, so a role granted after sign-in is not visible to a token issued before
+it. Rather than making the operator sign out and back in, the BFF reissues the
+upstream token once (`reissueSession`) when an approve/reject request arrives on
+a token without the claim, then re-checks. A transient refresh failure returns
+the request as 403 without ending the session — the expiry path is the only one
+that revokes.
+
 **Rate limits.** Auth attempts are limited per client and per email (a
 distributed password spray hits the email bucket), API calls per session, and
 pair-code lookups hardest of all (20/minute): a six-character code is ~31 bits,
@@ -140,7 +148,7 @@ cross-origin base for that reason.
 
 | Check | Where |
 | --- | --- |
-| Cookie attributes, CSRF, origin, expiry, rotation, revocation, rate limits | `server/bff/router.test.ts` (29 tests) |
+| Cookie attributes, CSRF, origin, expiry, rotation, revocation, rate limits, reviewer-role freshness | `server/bff/router.test.ts` (31 tests) |
 | Token sealing, store durability, no plaintext at rest | `server/bff/sessions.test.ts` |
 | Cookie serialisation and parsing | `server/bff/cookies.test.ts` |
 | Real HTTP surface, static hosting, traversal, no token in any response | `scripts/bff-smoke.mjs` (33 checks) |

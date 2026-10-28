@@ -104,7 +104,25 @@ be activated through *Forgot password → email code → new password*.
       successful login, but that login uses the *old* password — change it).
 - [ ] Do not "restore" the old password to save time on any device.
 
-### 3.3 Supabase API keys
+### 3.3 Reviewer role and stored sessions
+
+Applying the access-control migrations and naming the reviewer is a deploy step,
+not a code change:
+
+```bash
+DATABASE_URL='postgres://…' npm run db:harden -- --apply --grant-admin tic.raheel@gmail.com --revoke-sessions
+```
+
+- [ ] Run it after the rotation in 3.1 (the grant is idempotent; re-running is safe).
+- [ ] `--revoke-sessions` deletes that account's stored BFF sessions, so the
+      token issued before the rotation stops working on the next request.
+- [ ] Sign the account in again — the role lives in the token.
+- [ ] If the account is also a Supabase user whose password was rotated, do the
+      rotation first so the new password is the one that gets used.
+
+See `docs/security/rls-model.md` for the full ordering and the breaking changes.
+
+### 3.4 Supabase API keys
 
 - [ ] **anon key** — rotate if it was ever pasted anywhere other than the
       deployment's environment settings. It is public by design, but a rotated
@@ -115,7 +133,7 @@ be activated through *Forgot password → email code → new password*.
       values, redeploy, and confirm the app still works before revoking the old
       key.
 
-### 3.4 Other secrets in the same blast radius
+### 3.5 Other secrets in the same blast radius
 
 - [ ] `BFF_CSRF_SECRET` — regenerating it invalidates outstanding CSRF tokens
       (harmless; users reload).

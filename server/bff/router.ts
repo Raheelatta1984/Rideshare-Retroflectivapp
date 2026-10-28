@@ -304,6 +304,45 @@ export function createBffRouter(deps: BffDeps): BffHandler {
     }
   }
 
+  /**
+   * Ask GoTrue for a new access token without touching the session on failure.
+   *
+   * Used for one thing: a role granted a minute ago lives in `app_metadata`, and
+   * the token in the session was issued before it. Refreshing re-derives the
+   * claims from the current user record, so the very next reviewer action works
+   * without making the operator sign out and back in. A transient upstream
+   * failure returns null — it must not end the session, which is what the
+   * expiry path (correctly) does.
+   */
+  async function reissueSession(record: SessionRecord): Promise<SessionRecord | null> {
+    try {
+      const refreshed = await upstream.refresh(record.refreshToken);
+      const next: SessionRecord = {
+        ...record,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        accessExpiresAt: refreshed.expiresAt,
+        lastSeenAt: clock(),
+      };
+      await sessions.update(next);
+      return next;
+    } catch (error) {
+      logger.warn("bff: could not reissue the upstream token", { reason: String(error) });
+      return null;
+    }
+  }
+
+  /**
+   * The session to decide a reviewer question with: current token, reissued once
+   * if it does not carry the reviewer claim yet.
+   */
+  async function reviewerSession(record: SessionRecord): Promise<{ record: SessionRecord; isReviewer: boolean }> {
+    if (isAdminToken(record.accessToken)) return { record, isReviewer: true };
+    const reissued = await reissueSession(record);
+    if (!reissued) return { record, isReviewer: false };
+    return { record: reissued, isReviewer: isAdminToken(reissued.accessToken) };
+  }
+
   function setCookieHeader(token: string, maxAgeSeconds: number): string {
     return serializeSessionCookie(token, {
       secure: config.secureCookies,
@@ -677,10 +716,12 @@ export function createBffRouter(deps: BffDeps): BffHandler {
     if (typeError) return typeError;
 
     const campaign = readCampaign({ ...(await readJson(request) as Record<string, unknown>), id });
-    const record = await freshSession(resolved.record);
     const state = approvalStateFor(campaign);
-    if ((state === "approved" || state === "rejected") && !isAdminToken(record.accessToken)) {
-      return errorResponse(403, "Only a reviewer can approve or reject a campaign.", config);
+    let record = await freshSession(resolved.record);
+    if (state === "approved" || state === "rejected") {
+      const review = await reviewerSession(record);
+      if (!review.isReviewer) return errorResponse(403, "Only a reviewer can approve or reject a campaign.", config);
+      record = review.record;
     }
 
     const rows = await restJson<CampaignRow[]>(
@@ -719,9 +760,11 @@ export function createBffRouter(deps: BffDeps): BffHandler {
     const reviewer = sanitizeText(body.reviewer, 120) || resolved.record.email;
     const note = sanitizeText(body.note, 500) || undefined;
 
-    const record = await freshSession(resolved.record);
-    if ((state === "approved" || state === "rejected") && !isAdminToken(record.accessToken)) {
-      return errorResponse(403, "Only a reviewer can approve or reject a campaign.", config);
+    let record = await freshSession(resolved.record);
+    if (state === "approved" || state === "rejected") {
+      const review = await reviewerSession(record);
+      if (!review.isReviewer) return errorResponse(403, "Only a reviewer can approve or reject a campaign.", config);
+      record = review.record;
     }
 
     const rows = await restJson<CampaignRow[]>(
