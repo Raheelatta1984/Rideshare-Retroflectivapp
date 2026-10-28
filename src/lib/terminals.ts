@@ -1,3 +1,4 @@
+import qrcode from "qrcode-generator";
 import type { TerminalBinding, TerminalPosition } from "../types";
 import { normalizePairCode, uid } from "./id";
 
@@ -72,14 +73,24 @@ export function terminalUrl(base: string, options: { code?: string | null; posit
   return url.toString();
 }
 
-/**
- * QR image for a terminal URL.
- *
- * Same generator the console already uses for pairing QRs, so a printed
- * terminal sticker and the in-console QR behave identically.
- */
+/** Generate a pairing QR locally; the pair code is never sent to a QR service. */
 export function terminalQrUrl(target: string, size = 220): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&bgcolor=050505&color=E8A317&data=${encodeURIComponent(target)}`;
+  const qr = qrcode(0, "M");
+  // URL serialisation percent-encodes non-ASCII characters before QR encoding.
+  qr.addData(new URL(target, typeof window === "undefined" ? "https://retroflex.app/" : window.location.href).toString());
+  qr.make();
+  const count = qr.getModuleCount();
+  const quiet = 4;
+  const dimension = count + quiet * 2;
+  const pixels = Number.isFinite(size) ? Math.min(2048, Math.max(1, Math.round(size))) : 220;
+  const cells: string[] = [];
+  for (let row = 0; row < count; row++) {
+    for (let col = 0; col < count; col++) {
+      if (qr.isDark(row, col)) cells.push(`M${col + quiet} ${row + quiet}h1v1h-1z`);
+    }
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pixels}" height="${pixels}" viewBox="0 0 ${dimension} ${dimension}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#050505"/><path fill="#E8A317" d="${cells.join("")}"/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
 /** Storage key of the display authorization flag for a code + position. */

@@ -12,7 +12,8 @@ review branch `arena/210c8f85-rideshare-retroflectivapp`.
 > audit pass; npm audit currently reports zero vulnerabilities. The BFF described
 > in §6 is still **not implemented**, so the default Supabase session remains in
 > browser storage. The historical observations and results below describe the
-> original review, not the current dependency versions.
+> original review, not the current dependency versions. Pairing QRs are now
+> generated locally, and the Pages workflow actions are pinned by commit SHA.
 
 ## 1. Stack and applicability verdict
 

@@ -22,7 +22,7 @@ export const HEADER_ONLY_DIRECTIVES = "frame-ancestors 'none';";
 export const FONT_STYLE_ORIGINS = ["https://fonts.googleapis.com"];
 export const FONT_FILE_ORIGINS = ["https://fonts.gstatic.com"];
 /** Hero photography (Landing/Auth) and the pairing QR generator (lib/terminals.ts). */
-export const IMAGE_ORIGINS = ["https://images.pexels.com", "https://api.qrserver.com"];
+export const IMAGE_ORIGINS = ["https://images.pexels.com"];
 
 /** PeerJS' public signalling host, used when no override is configured. */
 export const DEFAULT_PEER_HOST = "0.peerjs.com";
