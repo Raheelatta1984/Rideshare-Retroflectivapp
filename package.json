@@ -39,7 +39,7 @@
     "@vitejs/plugin-react": "5.1.1",
     "jsdom": "25.0.1",
     "jsqr": "1.4.0",
-    "tailwindcss": "4.1.17",
+    "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vite-plugin-singlefile": "2.3.0",
