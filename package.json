@@ -18,8 +18,10 @@
     "audit": "node scripts/audit.mjs",
     "bff:build": "vite build --config vite.bff.config.ts",
     "bff:smoke": "node scripts/bff-smoke.mjs",
-    "security:rls": "vitest run supabase/tests/rls.test.ts scripts/sql-policy-audit.test.ts",
+    "security:rls": "vitest run supabase/tests scripts/sql-policy-audit.test.ts scripts/db-hardening.test.ts",
     "security:rotate": "node scripts/rotate-admin-credential.mjs",
+    "db:harden": "node scripts/apply-hardening.mjs",
+    "auth:grant-admin": "node scripts/grant-admin.mjs",
     "security:storage": "vitest run src/lib/security/storage-guard.test.ts"
   },
   "dependencies": {

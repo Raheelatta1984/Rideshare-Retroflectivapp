@@ -187,7 +187,10 @@ function createFakeUpstream() {
     }
   }
 
-  const roleFor = (email: string) => (email === "admin@example.com" ? "admin" : "authenticated");
+  // Mutable on purpose: granting the reviewer role changes what the *next*
+  // token issuance carries, which is the case `reviewerSession` exists for.
+  const roles = new Map<string, string>([["admin@example.com", "admin"]]);
+  const roleFor = (email: string) => roles.get(email) ?? "authenticated";
 
   function grant(email: string, id: string): UpstreamSession {
     return {
@@ -198,7 +201,17 @@ function createFakeUpstream() {
     };
   }
 
-  return { upstream, calls, users, booths, devices, events, campaigns, refreshCount: () => refreshCount };
+  return {
+    upstream,
+    calls,
+    users,
+    booths,
+    devices,
+    events,
+    campaigns,
+    roles,
+    refreshCount: () => refreshCount,
+  };
 }
 
 function json(body: unknown, status = 200): Response {
@@ -524,6 +537,29 @@ describe("BFF campaign access", () => {
     expect(response.status).toBe(200);
     const audit = h.fake.calls.find((call) => call.path === "approval_audit" && call.method === "POST");
     expect((audit?.body as Array<Record<string, unknown>>)[0]).toMatchObject({ campaign_id: "camp_draft", state: "approved" });
+  });
+
+  it("picks up a reviewer role granted after sign-in, without a re-login", async () => {
+    // Sign in first, then grant (the order the runbook produces).
+    const { cookie, csrf } = await signIn("owner@example.com");
+    h.fake.roles.set("owner@example.com", "admin");
+
+    const response = await h.handler(
+      request("/campaigns/camp_draft/approval", { method: "POST", cookie, csrf, body: { state: "approved", note: "ok" } }),
+    );
+    expect(response.status).toBe(200);
+    expect(h.fake.refreshCount()).toBeGreaterThan(0);
+  });
+
+  it("still refuses a reviewer action from an account with no role", async () => {
+    const { cookie, csrf } = await signIn("owner@example.com");
+    const response = await h.handler(
+      request("/campaigns/camp_draft/approval", { method: "POST", cookie, csrf, body: { state: "approved" } }),
+    );
+    expect(response.status).toBe(403);
+    // The reissue must not end the session on a refused decision.
+    const session = await h.handler(request("/session", { cookie, origin: null }));
+    expect(((await session.json()) as { account: unknown }).account).not.toBeNull();
   });
 
   it("rejects malformed campaign ids without reaching the database", async () => {

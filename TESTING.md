@@ -12,12 +12,14 @@ Individual steps:
 | Command | What it does |
 | --- | --- |
 | `npm run typecheck` | `tsc --noEmit` — type errors fail the run |
-| `npm test` | Vitest, single pass (55 tests) |
+| `npm test` | Vitest, single pass (includes the SQL suites below) |
 | `npm run test:watch` | Re-run on save while you work |
 | `npm run test:coverage` | Coverage report (`text`, `html`, `json-summary`) |
 | `npm run build` | Production single-file bundle into `dist/` |
 | `npm run smoke` | Checks the built artifact (see below) — run after `build` |
-| `npm run verify` | All of the above in order, CI does the same |
+| `npm run security:rls` | SQL policy + migration-ordering suites against a real PostgreSQL (PGlite) |
+| `npm run bff:build` / `bff:smoke` | Build the session service and drive it over real HTTP |
+| `npm run verify` | typecheck → test → build → bff build → smoke → bff smoke, in that order; CI does the same |
 
 CI: `.github/workflows/ci.yml` runs `typecheck → test → build → smoke` on every
 push to `main` and every pull request.
@@ -33,6 +35,21 @@ push to `main` and every pull request.
 | `src/lib/agreements.test.ts` | consent PDF from both input shapes, `deliverAgreementPdf()` returns a **string** status (never an object), `getPlatform()` total fallback |
 | `src/lib/retroflex-core.test.ts` | pair-code sanitising, position normalising, hash-path normalising |
 | `src/app.boot.test.tsx` | mounts the real `App` in jsdom on two routes, asserts no console errors, asserts boot-written record ids are unique and well-formed |
+
+### Security and deployment suites
+
+| File | Covers |
+| --- | --- |
+| `server/bff/*.test.ts` | Session service: cookie attributes (`__Host-`, `HttpOnly`, `Secure`, `SameSite`), CSRF binding and rotation, origin checks, idle/absolute expiry, revocation, token sealing at rest, rate limits, static-file traversal |
+| `src/lib/backend/bff.test.ts` | The browser adapter: `credentials: include`, CSRF bootstrap, no token in any payload, 401 clears the cached account |
+| `supabase/tests/rls.test.ts` | Every policy on a real PostgreSQL, as `anon`, two drivers and a reviewer — reads, writes, storage, rollups |
+| `supabase/tests/hardening.test.ts` | Applying 0005+0006 **together**: no anonymous read gap, rollback when 0006 fails, post-condition failures abort the deploy, and the reviewer grant (including that a stale token still cannot approve) |
+| `scripts/sql-policy-audit.test.ts` | Static guard: no permissive policy, no write grant to `anon`, `search_path` pinned on every definer function |
+| `scripts/db-hardening.test.ts` | The Admin API transport of the reviewer grant: merges `app_metadata`, idempotent, honest about a missing account |
+| `scripts/bff-smoke.mjs` | 33 checks over real HTTP on the built bundle, plus "no upstream token in any response" |
+
+The deploy steps themselves are scripted: `npm run db:harden` and
+`npm run auth:grant-admin` — see [docs/security/rls-model.md](docs/security/rls-model.md).
 
 `npm run smoke` is separate: jsdom cannot execute the ES-module bundle, so it
 checks the **artifact** instead — no CRA-style `process.env`, no dead relay host,

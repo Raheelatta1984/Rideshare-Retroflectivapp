@@ -8,220 +8,48 @@
  * assertions about what each role can actually read and write, not a reading of
  * the SQL. No Docker, no hosted project, so it runs in CI.
  *
- * Supabase-only objects (`auth.users`, `auth.jwt()`, `storage.objects`, the
- * `supabase_realtime` publication) are created here to match the real shapes.
- * The one line that is dropped is `create extension "pgcrypto"` in 0001: PGlite
- * has no contrib extensions and `gen_random_uuid()` is core since PG13, so the
- * extension is a no-op on any Supabase project (PG15+).
+ * The Supabase-shaped objects (`auth.users`, `auth.jwt()`, `storage.objects`,
+ * the `supabase_realtime` publication) and their default grants live in
+ * `./harness`, shared with the migration-ordering suite in
+ * `./hardening.test.ts`, so the two can never drift apart.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite } from "@electric-sql/pglite";
+import {
+  ALL_MIGRATIONS,
+  anon,
+  as as actAs,
+  createTestDatabase,
+  denied,
+  driverA,
+  driverB,
+  campaignPayload as payload,
+  reviewer,
+  rows as readRows,
+  seedOwned,
+  type Actor,
+} from "./harness";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const migrationsDir = path.resolve(here, "..", "migrations");
-
-const DRIVER_A = "11111111-1111-1111-1111-111111111111";
-const DRIVER_B = "22222222-2222-2222-2222-222222222222";
-const ADMIN = "33333333-3333-3333-3333-333333333333";
+const DRIVER_A = driverA.sub as string;
+const DRIVER_B = driverB.sub as string;
+const ADMIN = reviewer.sub as string;
 
 let db: PGlite;
 
-function legalBlock(complete = true): Record<string, unknown> {
-  const consent = (confirmed: boolean) => ({
-    confirmed,
-    signerName: "Priya Raman",
-    agreementReference: "AGR-2026-001",
-    email: "priya@example.com",
-  });
-  return {
-    appOwner: consent(complete),
-    driver: consent(complete),
-    vehicleOwner: consent(complete),
-    campaignOwner: consent(complete),
-    trademarkAuthorization: consent(complete),
-    safetyAssessment: consent(complete),
-    merchantName: "Bondi Coffee",
-    offerExpiry: "2026-12-31",
-    privacyPolicyUrl: "https://example.com/privacy",
-    qrTermsConfirmed: true,
-    noRiderDataWithoutConsent: true,
-  };
+/** Thin wrappers so the assertions below read as `rows(sql)` / `as(actor, fn)`. */
+function as<T>(actor: Actor, fn: () => Promise<T>): Promise<T> {
+  return actAs(db, actor, fn);
 }
 
-function payload(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id,
-    title: `Campaign ${id}`,
-    enabled: true,
-    approved: false,
-    mediaType: "image",
-    displaySeconds: 10,
-    legal: legalBlock(),
-    ...overrides,
-  };
-}
-
-async function applyMigrations(): Promise<void> {
-  await db.exec(`
-    create role anon nologin;
-    create role authenticated nologin;
-    create role service_role nologin bypassrls;
-    create schema if not exists auth;
-    create schema if not exists storage;
-
-    create table auth.users (
-      id uuid primary key,
-      email text unique,
-      raw_app_meta_data jsonb default '{}'::jsonb,
-      raw_user_meta_data jsonb default '{}'::jsonb,
-      updated_at timestamptz default now()
-    );
-
-    create or replace function auth.jwt()
-    returns jsonb language sql stable as $$
-      select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb;
-    $$;
-
-    create or replace function auth.uid()
-    returns uuid language sql stable as $$
-      select nullif(auth.jwt() ->> 'sub', '')::uuid;
-    $$;
-
-    create or replace function auth.role()
-    returns text language sql stable as $$
-      select coalesce(nullif(current_setting('request.jwt.claim.role', true), ''), auth.jwt() ->> 'role');
-    $$;
-
-    create table storage.buckets (
-      id text primary key,
-      name text not null,
-      public boolean not null default false
-    );
-
-    create table storage.objects (
-      id uuid primary key default gen_random_uuid(),
-      bucket_id text references storage.buckets (id),
-      name text not null,
-      owner uuid
-    );
-    alter table storage.objects enable row level security;
-
-    create publication supabase_realtime;
-
-    -- Supabase's default privileges: without these the REVOKEs in 0005 would be
-    -- no-ops and the tests would pass for the wrong reason.
-    grant usage on schema public, auth, storage to anon, authenticated;
-    grant execute on all functions in schema auth to anon, authenticated;
-    alter default privileges in schema public grant all on tables to anon, authenticated;
-    alter default privileges in schema public grant all on functions to anon, authenticated;
-    alter default privileges in schema public grant all on sequences to anon, authenticated;
-    alter default privileges in schema storage grant all on tables to anon, authenticated;
-    grant all on storage.objects to anon, authenticated;
-    grant all on storage.buckets to anon, authenticated;
-  `);
-
-  for (const file of [
-    "0001_signage_phase2.sql",
-    "0002_compliance_mode.sql",
-    "0003_terminal_signup.sql",
-    "0004_next_id_image_shards.sql",
-    "0005_tenant_isolation.sql",
-    "0006_public_projections.sql",
-  ]) {
-    const sql = (await readFile(path.join(migrationsDir, file), "utf8")).replace(
-      /create extension if not exists "pgcrypto";/g,
-      "-- pgcrypto is unnecessary on PG13+: gen_random_uuid() is core.",
-    );
-    try {
-      await db.exec(sql);
-    } catch (error) {
-      throw new Error(`${file} failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-}
-
-async function seed(): Promise<void> {
-  await db.exec(`
-    insert into auth.users (id, email, raw_app_meta_data) values
-      ('${DRIVER_A}', 'a@example.com', '{}'::jsonb),
-      ('${DRIVER_B}', 'b@example.com', '{}'::jsonb),
-      ('${ADMIN}', 'admin@example.com', '{"role":"admin"}'::jsonb);
-
-    insert into public.campaigns (id, title, owner, approval_state, payload) values
-      ('camp_a_draft',   'A draft',   '${DRIVER_A}', 'draft',    '${JSON.stringify(payload("camp_a_draft"))}'::jsonb),
-      ('camp_a_pending', 'A pending', '${DRIVER_A}', 'pending',  '${JSON.stringify(payload("camp_a_pending"))}'::jsonb),
-      ('camp_b_draft',   'B draft',   '${DRIVER_B}', 'draft',    '${JSON.stringify(payload("camp_b_draft"))}'::jsonb),
-      ('camp_approved',  'Approved',  '${DRIVER_A}', 'approved', '${JSON.stringify(payload("camp_approved", { approved: true }))}'::jsonb);
-
-    insert into public.booths (owner, name, email, phone, city, pair_code, front_pair_code)
-    values ('${DRIVER_A}', 'Booth A', 'a@example.com', '0400000000', 'Sydney', 'ABC123', 'FRONT1');
-
-    insert into public.devices (id, name, pair_code, position, owner, device_key, origin)
-    values
-      ('term_a', 'A terminal', 'ABC123', 'rear', '${DRIVER_A}', 'dev-a', 'console'),
-      ('term_b', 'B terminal', 'XYZ789', 'rear', '${DRIVER_B}', 'dev-b', 'console');
-
-    insert into public.campaign_events (id, campaign_id, device_id, kind, at)
-    values ('evt_seed', 'camp_approved', 'dev-a', 'proof-of-play', now());
-  `);
-}
-
-type Role = "anon" | "authenticated";
-
-interface Actor {
-  role: Role;
-  sub?: string;
-  appMetadata?: Record<string, unknown>;
-}
-
-function claimsFor(actor: Actor): string {
-  return JSON.stringify({
-    sub: actor.sub,
-    role: actor.role,
-    app_metadata: actor.appMetadata ?? {},
-    email: actor.sub ? `${actor.sub}@example.com` : undefined,
-  });
-}
-
-/** Run `fn` as a database role with a given JWT, then restore the superuser. */
-async function as<T>(actor: Actor, fn: () => Promise<T>): Promise<T> {
-  await db.exec(`set role ${actor.role}`);
-  await db.query("select set_config('request.jwt.claims', $1, false)", [claimsFor(actor)]);
-  try {
-    return await fn();
-  } finally {
-    await db.exec("reset role");
-    await db.query("select set_config('request.jwt.claims', '', false)", []);
-  }
-}
-
-async function rows<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-  const result = await db.query<T>(sql, params);
-  return result.rows;
-}
-
-const anon: Actor = { role: "anon" };
-const driverA: Actor = { role: "authenticated", sub: DRIVER_A };
-const driverB: Actor = { role: "authenticated", sub: DRIVER_B };
-const reviewer: Actor = { role: "authenticated", sub: ADMIN, appMetadata: { role: "admin" } };
-
-async function denied(fn: () => Promise<unknown>): Promise<string> {
-  try {
-    await fn();
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  throw new Error("expected the statement to be rejected, but it succeeded");
+function rows<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+  return readRows<T>(db, sql, params);
 }
 
 beforeAll(async () => {
-  db = await PGlite.create();
-  await applyMigrations();
-  await seed();
+  const created = await createTestDatabase(ALL_MIGRATIONS);
+  db = created.db;
+  await seedOwned(db);
 }, 120_000);
 
 afterAll(async () => {

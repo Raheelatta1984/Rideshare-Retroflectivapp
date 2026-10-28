@@ -191,5 +191,15 @@ npm run bff:build && npm run bff:smoke    # build and verify the session service
 - [docs/security/administrator-credential-rotation.md](docs/security/administrator-credential-rotation.md) — required, out of band
 - [docs/security/production-risks.md](docs/security/production-risks.md) — the current ledger
 
+The access-control deploy step is scripted (dry run by default):
+
+```bash
+npm run db:harden -- --dry-run                       # apply 0005+0006 in a transaction, verify, roll back
+npm run db:harden -- --apply --grant-admin <owner> --revoke-sessions
+npm run auth:grant-admin -- --email <owner> --apply --revoke-sessions   # just the role
+```
+
+Then sign that account in again — the reviewer role lives in the JWT.
+
 Data-plane infrastructure (PgBouncer, replicas, memcached, image shards) is in
 [INFRASTRUCTURE.md](./INFRASTRUCTURE.md).

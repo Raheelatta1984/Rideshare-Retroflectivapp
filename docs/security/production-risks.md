@@ -9,7 +9,7 @@ fix. Read the **Open** table first.
 | # | Risk | Why code cannot close it | Action |
 | --- | --- | --- | --- |
 | 1 | **Leaked administrator password** | The literal shipped in `src/lib/access.ts` and is in the public git history. Removing it from the current tree does not invalidate it. | Follow `docs/security/administrator-credential-rotation.md`: rotate at the identity provider, revoke sessions, review sign-in history, rotate the Supabase user and API keys. `scripts/rotate-admin-credential.mjs` automates the Supabase part. **Until this is done, treat the credential as live.** |
-| 2 | **The live deployment may not match this repository** | Policies, env vars, bucket visibility and CDN headers are deployment state. This repo cannot read them. | Run the verification block in `docs/security/rls-model.md` against the real project; open the deployed app with DevTools and confirm one CSP header, one `__Host-rf_session` cookie and zero `Refused to …` lines. |
+| 2 | **The live deployment may not match this repository** | Policies, env vars, bucket visibility and CDN headers are deployment state. This repo cannot read them, and the sandbox has no route to a Supabase project. | `npm run db:harden -- --dry-run` (then `--apply --grant-admin <owner> --revoke-sessions`), then sign that account in again — `docs/security/rls-model.md` has the exact order. Open the deployed app with DevTools and confirm one CSP header, one `__Host-rf_session` cookie and zero `Refused to …` lines. |
 | 3 | **Not every host can run the BFF** | GitHub Pages is static: it cannot set an `HttpOnly` cookie, so a Pages deployment stays on the memory-only direct-Supabase adapter. | Deploy `server/bff` on a Node host (`docs/security/bff.md`) if the deployment holds anything worth stealing; otherwise accept risk #4 knowingly. |
 
 ## Fixed in code
@@ -23,7 +23,9 @@ fix. Read the **Open** table first.
 | No CSRF protection | Derived per-session CSRF token + exact-origin check + JSON content type on every state-changing route | `server/bff/router.ts`, `server/bff/router.test.ts` |
 | Webhook signature fail-open | Fails closed, length-safe compare | `scripts/webhook-handler.ts` |
 | No security headers | Vercel header set, build-injected hash-pinned `<meta>` CSP, and the BFF server sends the header-only directives too | `vercel.json`, `scripts/csp.mjs`, `server/bff/node.ts` |
-| `using (true)` policies on campaign data | 0005/0006 replace them with ownership + reviewer roles; anonymous access is limited to `public_campaigns` | `supabase/migrations/0005…`, `0006…`, `supabase/tests/rls.test.ts` (33 assertions on real Postgres) |
+| `using (true)` policies on campaign data | 0005/0006 replace them with ownership + reviewer roles; anonymous access is limited to `public_campaigns` | `supabase/migrations/0005…`, `0006…`, `supabase/tests/rls.test.ts` (34 assertions on real Postgres) |
+| 0005 and 0006 applied separately, leaving no anonymous read path | `npm run db:harden` applies both in one transaction, verifies 13 post-conditions inside it, and rolls back if any fails | `scripts/db-hardening.mjs`, `supabase/tests/hardening.test.ts` (20 assertions, including the rollback) |
+| No way to grant the reviewer role safely | `npm run auth:grant-admin` (SQL or Admin API), idempotent, merges `app_metadata`, can end the account's sessions | `scripts/grant-admin.mjs`, `scripts/db-hardening.test.ts` |
 | Enumerable booth directory | View dropped; exact-match `resolve_pair_code()` returns `{found, position}` only; BFF rate limits lookups | `0006`, `server/bff/router.ts` |
 | Consent PII in campaign payloads | Public projection redacts the six consent records to booleans + "on file" | `0006` |
 | Anonymous reads of event telemetry | Revoked; the rollup view is `security_invoker` | `0005` |
@@ -65,12 +67,13 @@ Verified in this repository, in CI:
 
 * Static-only leaks: no tracked `.env`, no `dangerouslySetInnerHTML`/`innerHTML`,
   no `document.cookie =` (enforced by `npm run security:storage`).
-* BFF behaviour: 45 unit tests plus 33 real-HTTP smoke checks on the built
+* BFF behaviour: 47 unit tests plus 33 real-HTTP smoke checks on the built
   bundle (cookie attributes, CSRF, origin, rotation, revocation, traversal,
   "no token in any response").
-* Database policies: `npm test` applies `0001`–`0006` to a real PostgreSQL
+* Database policies: `npm test` applies `0001`–`0007` to a real PostgreSQL
   (PGlite/WASM) and exercises them as `anon`, two drivers and a reviewer
-  (33 assertions), plus a static migration audit.
+  (34 assertions), plus 20 migration-ordering assertions (0005+0006 atomicity,
+  rollback, the reviewer grant) and a static migration audit.
 * Build output: hash-pinned CSP, header set, smoke checks.
 
 Not verified here, because it needs the real deployment:

@@ -23,5 +23,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "server", "scripts", "vite.config.ts", "src/**/*.ts", "src/**/*.tsx", "server/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src", "server", "scripts", "supabase", "vite.config.ts", "src/**/*.ts", "src/**/*.tsx", "server/**/*.ts", "scripts/**/*.ts", "supabase/**/*.ts"]
 }
