@@ -273,6 +273,55 @@ describe("signed-in drivers", () => {
   });
 });
 
+describe("the consent-redaction boundary", () => {
+  /**
+   * `public_campaigns` redacts consent records for anonymous readers, but the
+   * `campaigns` table keeps them raw, and `campaigns_own_read` lets any
+   * signed-in account see approved rows. So a signed-in account — and signup is
+   * open — can read the signer names, emails and agreement references of every
+   * approved campaign.
+   *
+   * That is a known, documented residual risk (docs/security/rls-model.md,
+   * "Residual: consent metadata of approved campaigns"), not an invariant. This
+   * test pins the current behaviour so a future change is deliberate: if it
+   * starts failing, the exposure was narrowed — update this test *and* the
+   * docs, and confirm the glass still loads for a signed-in display.
+   */
+  it("redacts for anonymous readers", async () => {
+    const [row] = await as(anon, () =>
+      rows<{ payload: { legal: Record<string, Record<string, unknown>> } }>(
+        "select payload from public.public_campaigns where id = 'camp_approved'",
+      ),
+    );
+    expect(row.payload.legal.signerName).toBeUndefined();
+    expect(row.payload.legal.driver.signerName).toBe("on file");
+    expect(JSON.stringify(row.payload)).not.toContain("priya@example.com");
+  });
+
+  it("does not redact for a signed-in account that does not own the campaign (known exposure)", async () => {
+    const [row] = await as(driverB, () =>
+      rows<{ payload: { legal: Record<string, Record<string, unknown>> } }>(
+        "select payload from public.campaigns where id = 'camp_approved'",
+      ),
+    );
+    expect(row.payload.legal.driver).toMatchObject({ signerName: "Priya Raman", email: "priya@example.com" });
+  });
+
+  it("still cannot change what it can read", async () => {
+    // RLS filters rather than raising: the statement succeeds and touches
+    // nothing, which is why this asserts on the affected rows.
+    const changed = await as(driverB, () =>
+      rows("update public.campaigns set payload = '{}'::jsonb where id = 'camp_approved' returning id"),
+    );
+    expect(changed).toHaveLength(0);
+
+    const [row] = await rows<{ payload: { legal: { driver: { signerName: string } } } }>(
+      "select payload from public.campaigns where id = 'camp_approved'",
+    );
+    expect(row.payload.legal.driver.signerName).toBe("Priya Raman");
+  });
+});
+
 describe("reviewers", () => {
   it("can see every campaign", async () => {
     const list = await as(reviewer, () => rows<{ id: string }>("select id from public.campaigns order by id"));

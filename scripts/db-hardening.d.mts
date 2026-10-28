@@ -50,6 +50,24 @@ export declare function revokeUserSessions(
   email: string,
 ): Promise<{ ok: boolean; revoked: number; note?: string }>;
 
+export declare function listOwnerlessCampaigns(
+  client: Queryable,
+): Promise<Array<{ id: string; title: string | null; approval_state: string; created_at: string | null }>>;
+
+export declare function assignLegacyOwners(
+  client: Queryable,
+  options: { owner: string; ids?: string[]; allowAll?: boolean },
+): Promise<{
+  ok: boolean;
+  reason?: string;
+  message?: string;
+  assigned?: number;
+  ids?: string[];
+  ownerId?: string;
+  frozen?: string[];
+  pending?: string[];
+}>;
+
 export declare function grantReviewerViaApi(options: {
   baseUrl: string;
   serviceRoleKey: string;

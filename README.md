@@ -197,6 +197,8 @@ The access-control deploy step is scripted (dry run by default):
 npm run db:harden -- --dry-run                       # apply 0005+0006 in a transaction, verify, roll back
 npm run db:harden -- --apply --grant-admin <owner> --revoke-sessions
 npm run auth:grant-admin -- --email <owner> --apply --revoke-sessions   # just the role
+npm run db:assign-owners -- --list                   # pre-0005 rows with no owner
+npm run db:assign-owners -- --owner <email> --apply  # adopt them (refuses if ambiguous)
 ```
 
 Then sign that account in again — the reviewer role lives in the JWT.
