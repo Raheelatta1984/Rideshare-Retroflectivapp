@@ -734,7 +734,7 @@ function DisplayTab({ connectedCodes }: { connectedCodes: string[] }) {
       <div className="mt-6 space-y-4">
         {devices.map((device) => {
           const url = `${tabletBase}?mode=tablet&position=${device.position}&display=${device.code}`;
-          const qr = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&bgcolor=050505&color=E8A317&data=${encodeURIComponent(url)}`;
+          const qr = terminalQrUrl(url);
           const connected = connectedCodes.includes(device.code);
           return <div key={device.position} className="rounded-3xl border border-line bg-panel p-5 text-center">
             <div className="flex items-center justify-between"><p className="text-sm font-medium">{device.title}</p><span className={`text-[10px] tracking-[0.18em] ${connected ? "text-amber" : "text-mist"}`}>{connected ? "CONNECTED" : "WAITING"}</span></div>

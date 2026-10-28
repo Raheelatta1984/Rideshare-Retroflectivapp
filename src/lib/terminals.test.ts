@@ -1,3 +1,4 @@
+import jsQR from "jsqr";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   defaultTerminalLabel,
@@ -80,10 +81,32 @@ describe("terminalUrl / terminalQrUrl", () => {
     expect(url).not.toContain("#/lab");
   });
 
-  it("encodes the target inside the QR image URL", () => {
-    const qr = terminalQrUrl("https://retroflex.app/?mode=terminal", 260);
-    expect(qr).toContain("size=260x260");
-    expect(decodeURIComponent(qr)).toContain("mode=terminal");
+  it("generates a local QR with a quiet zone, without exposing the target in the image URL", () => {
+    const target = "https://retroflex.app/?mode=terminal&display=7K2M9Q";
+    const qr = terminalQrUrl(target, 260);
+    expect(qr).toMatch(/^data:image\/svg\+xml,/);
+    const svg = decodeURIComponent(qr.slice(qr.indexOf(",") + 1));
+    expect(svg).toContain('width="260" height="260"');
+    expect(svg).toContain('M4 4h1v1h-1z');
+    expect(svg).not.toContain(target);
+    // Rasterise the emitted SVG's modules and decode the image as a scanner does.
+    const dimension = Number(svg.match(/viewBox="0 0 (\d+) \d+"/)?.[1]);
+    const scale = 5;
+    const width = dimension * scale;
+    const rgba = new Uint8ClampedArray(width * width * 4);
+    for (let i = 0; i < rgba.length; i += 4) {
+      rgba[i] = 5; rgba[i + 1] = 5; rgba[i + 2] = 5; rgba[i + 3] = 255;
+    }
+    for (const match of svg.matchAll(/M(\d+) (\d+)h1v1h-1z/g)) {
+      const x = Number(match[1]) * scale;
+      const y = Number(match[2]) * scale;
+      for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) {
+        const i = ((y + dy) * width + x + dx) * 4;
+        rgba[i] = 232; rgba[i + 1] = 163; rgba[i + 2] = 23;
+      }
+    }
+    expect(jsQR(rgba, width, width)?.data).toBe(target);
+    expect(qr).not.toBe(terminalQrUrl("https://retroflex.app/?mode=terminal&display=FR0NT1", 260));
   });
 });
 

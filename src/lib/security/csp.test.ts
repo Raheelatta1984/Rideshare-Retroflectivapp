@@ -49,7 +49,7 @@ describe("CSP policy", () => {
     expect(directive(policy, "font-src")).toContain("https://fonts.gstatic.com");
     expect(directive(policy, "style-src")).toContain("https://fonts.googleapis.com");
     expect(directive(policy, "img-src")).toContain("https://images.pexels.com");
-    expect(directive(policy, "img-src")).toContain("https://api.qrserver.com");
+    expect(directive(policy, "img-src")).not.toContain("https://api.qrserver.com");
     expect(directive(policy, "connect-src")).toContain(`wss://${DEFAULT_PEER_HOST}`);
     // Nothing else sneaks in.
     expect(policy).not.toMatch(/http:\/\//);
