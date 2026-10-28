@@ -21,6 +21,7 @@ import type {
 import type { CampaignEventRecord } from "../../types";
 import { issueManifest, verifyManifest } from "./manifest";
 import { db, defaultSettings } from "../storage";
+import { hashPassword, verifyPassword } from "../password";
 import {
   normalizeTerminalBinding,
   readLocalBinding,
@@ -201,7 +202,8 @@ export function createLocalBackend(options: { secret?: string; keyId?: string } 
         id: uid("drv"),
         name,
         email,
-        password,
+        // Same rule as the booth login: nothing writes a clear-text password.
+        password: await hashPassword(password),
         phone: (input.phone ?? "").trim(),
         city: (input.city ?? "").trim(),
         pairCode: uniquePairCode(),
@@ -220,8 +222,14 @@ export function createLocalBackend(options: { secret?: string; keyId?: string } 
 
     async signIn(input: AccountSignInInput): Promise<AccountResult> {
       const found = db.findByEmail((input.email ?? "").trim());
-      if (!found || found.password !== input.password) {
-        return { account: null, error: "Email or password is wrong." };
+      if (!found) return { account: null, error: "Email or password is wrong." };
+
+      const submitted = input.password ?? "";
+      const verification = await verifyPassword(found.password, submitted);
+      if (!verification.ok) return { account: null, error: "Email or password is wrong." };
+
+      if (verification.needsRehash) {
+        db.saveDriver({ ...found, password: await hashPassword(submitted) });
       }
       db.setSession({ driverId: found.id });
       return { account: toTerminalAccount(found), error: null };

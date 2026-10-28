@@ -104,11 +104,14 @@ and the comment, and to expose the flag for reporting.
 
 ## Test accounts and one-click seeding
 
-An administrator account is seeded on first boot from `DEFAULT_ADMIN_ACCOUNTS`
-in `src/lib/access.ts` — currently `tic.raheel@gmail.com` with the password
-`Abc@123` — so a fresh browser can reach the admin tooling without the owner
-activation flow. Seeding never overwrites an existing record, and
-`VITE_SEED_DEFAULT_ADMINS=off` disables it entirely.
+An administrator identity is seeded on first boot from `DEFAULT_ADMIN_ACCOUNTS`
+in `src/lib/access.ts` — currently `tic.raheel@gmail.com` — so a fresh browser
+has the role, pair codes and settings ready. The record ships **without a
+password**: a committed default would be the same secret on every install and
+readable in the bundle, so the account is activated once through
+**Forgot password → email code → new password**. Seeding never overwrites an
+existing record, and `VITE_SEED_DEFAULT_ADMINS=off` disables it entirely.
+Passwords are stored as PBKDF2-SHA256 hashes (`src/lib/password.ts`).
 
 The console's *Commercial signage and QA* section has a **Seed demo campaign**
 button that creates a pre-approved static campaign, signs all six consents,

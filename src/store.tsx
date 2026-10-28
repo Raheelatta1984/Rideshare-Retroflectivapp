@@ -11,6 +11,7 @@ import type {
   TerminalPosition,
 } from "./types";
 import { db, defaultSettings } from "./lib/storage";
+import { hashPassword, verifyPassword } from "./lib/password";
 import { normalizePairCode, pairCode, uid } from "./lib/id";
 import { DEMO_DRIVER, seedDefaultAdmins, seedDemoDriver } from "./lib/demo";
 import { SAMPLE_RIDES } from "./lib/platforms";
@@ -30,12 +31,12 @@ interface Store {
   settings: DisplaySettings;
   setPowered: (on: boolean) => void;
   bootDemo: () => void;
-  login: (email: string, password: string) => string | null;
+  login: (email: string, password: string) => Promise<string | null>;
   requestPasswordReset: (email: string) => { error: string | null; recipient: string | null; emailHref: string | null };
   verifyPasswordResetCode: (email: string, code: string) => { error: string | null; token: string | null };
   validatePasswordReset: (token: string) => { email: string } | null;
-  resetPassword: (token: string, password: string) => string | null;
-  signup: (input: { name: string; email: string; password: string; phone: string; city: string }) => string | null;
+  resetPassword: (token: string, password: string) => Promise<string | null>;
+  signup: (input: { name: string; email: string; password: string; phone: string; city: string }) => Promise<string | null>;
   logout: () => void;
   updateDriver: (patch: Partial<Driver>) => void;
   updateVehicle: (patch: Partial<Driver["vehicle"]>) => void;
@@ -176,9 +177,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setDriver(d);
   };
 
-  const login = (email: string, password: string) => {
+  const login = async (email: string, password: string) => {
     const found = db.findByEmail(email);
-    if (!found || found.password !== password) return "Email or password is wrong.";
+    // Same message for "no such account" and "wrong password": the form must
+    // not become an account-existence oracle.
+    if (!found) return "Email or password is wrong.";
+
+    const verification = await verifyPassword(found.password, password);
+    if (!verification.ok) return "Email or password is wrong.";
+
+    if (verification.needsRehash) {
+      // A record written by an older build still holds the clear-text password.
+      // The password is known good now, so replace it with a hash.
+      const upgraded = { ...found, password: await hashPassword(password) };
+      db.saveDriver(upgraded);
+      hydrate(upgraded);
+      return null;
+    }
+
     hydrate(found);
     return null;
   };
@@ -230,20 +246,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return reset?.verifiedAt ? { email: reset.email } : null;
   };
 
-  const resetPassword = (token: string, password: string) => {
+  const resetPassword = async (token: string, password: string) => {
     if (password.length < 8) return "Use at least 8 characters.";
-    const account = db.completePasswordReset(token, password);
+    const account = db.completePasswordReset(token, await hashPassword(password));
     return account ? null : "This reset link is invalid, expired, or no longer matches a local account.";
   };
 
-  const signup = (input: { name: string; email: string; password: string; phone: string; city: string }) => {
+  const signup = async (input: { name: string; email: string; password: string; phone: string; city: string }) => {
     if (db.findByEmail(input.email)) return "An account already exists for that email.";
+    if (!input.password) return "Choose a password.";
     const d: Driver = {
       id: uid("drv"),
       name: input.name,
       email: input.email,
       phone: input.phone,
-      password: input.password,
+      password: await hashPassword(input.password),
       city: input.city,
       pairCode: pairCode(),
       createdAt: new Date().toISOString(),

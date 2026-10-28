@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { db, defaultSettings } from "./storage";
-import type { ActivityLog } from "../types";
+import type { ActivityLog, Driver } from "../types";
 
 beforeEach(() => {
   localStorage.clear();
@@ -104,5 +104,66 @@ describe("riders", () => {
     expect(rides).toHaveLength(1);
     expect(rides[0].status).toBe("accepted");
     expect(db.listRides("drv_2")).toHaveLength(0);
+  });
+});
+
+describe("password reset credentials", () => {
+  const EMAIL = "reset@retroflex.app";
+
+  it("issues a six-digit code and a 128-bit token", () => {
+    const reset = db.createPasswordReset(EMAIL);
+
+    expect(reset.code).toMatch(/^\d{6}$/);
+    expect(reset.token).toMatch(/^reset_[0-9a-f]{32}$/);
+    // Two requests never share a token: a guessed token would be a takeover.
+    const second = db.createPasswordReset("other@retroflex.app");
+    expect(second.token).not.toBe(reset.token);
+  });
+
+  it("accepts the right code once", () => {
+    const reset = db.createPasswordReset(EMAIL);
+
+    const result = db.verifyPasswordReset(EMAIL, reset.code);
+    expect(result.error).toBeNull();
+    expect(result.reset?.verifiedAt).toBeTypeOf("number");
+  });
+
+  it("burns the request after five wrong codes, as the screen promises", () => {
+    const reset = db.createPasswordReset(EMAIL);
+    const wrong = String((Number(reset.code) + 1) % 1_000_000).padStart(6, "0");
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      expect(db.verifyPasswordReset(EMAIL, wrong).error, `attempt ${attempt}`).toBe("Invalid or expired code");
+    }
+    expect(db.verifyPasswordReset(EMAIL, wrong).error).toMatch(/too many/i);
+    // Even the correct code no longer works on this request.
+    expect(db.verifyPasswordReset(EMAIL, reset.code).error).toMatch(/too many/i);
+  });
+
+  it("stores exactly what the caller hashed — never the submission", () => {
+    const driver: Driver = {
+      id: "drv_reset",
+      name: "Reset",
+      email: EMAIL,
+      phone: "",
+      password: "",
+      city: "Sydney",
+      pairCode: "7K2M9Q",
+      createdAt: new Date().toISOString(),
+      platforms: ["uber"],
+      vehicle: { make: "", model: "", color: "", plate: "", year: "" },
+      role: "driver",
+    };
+    db.saveDriver(driver);
+
+    const reset = db.createPasswordReset(EMAIL);
+    db.verifyPasswordReset(EMAIL, reset.code);
+    const hash = "pbkdf2-sha256$210000$c2FsdA==$aGFzaA==";
+    const updated = db.completePasswordReset(reset.token, hash);
+
+    expect(updated?.password).toBe(hash);
+    expect(db.findByEmail(EMAIL)?.password).toBe(hash);
+    // Single use.
+    expect(db.completePasswordReset(reset.token, hash)).toBeNull();
   });
 });

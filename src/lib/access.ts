@@ -5,18 +5,24 @@ import type { DriverRole } from "../types";
 export const SOURCE_OWNER_EMAIL = "raheel@retroflex.app";
 
 /**
- * Accounts provisioned as administrators the first time the app runs in a
+ * Administrator identities provisioned the first time the app runs in a
  * browser. They are seeded into local storage on boot (see lib/demo.ts) so a
- * fresh device can reach the admin-only commercial signage tools without
- * going through the owner activation flow.
+ * fresh device can reach the admin-only commercial signage tools.
  *
- * These are CLIENT-SIDE credentials in a browser build. They gate the admin
- * UI only — the real data boundary is the backend's row level security, not
- * this list. Remove an entry here (or set VITE_SEED_DEFAULT_ADMINS=off) if
- * this build must not ship an administrator login.
+ * Deliberately **no password**: a shared password committed to the repository
+ * ships in the bundle to every visitor and is the same secret on every install,
+ * so it protects nothing. Seeded accounts are created without a credential and
+ * are activated by the owner through "Forgot password" → email code → new
+ * password, exactly like the source-owner activation. Until then they cannot be
+ * logged into (`verifyPassword` refuses an empty record).
+ *
+ * These are CLIENT-SIDE roles in a browser build. They gate the admin UI only —
+ * the real data boundary is the backend's row level security, not this list.
+ * Remove an entry here (or set VITE_SEED_DEFAULT_ADMINS=off) if this build must
+ * not ship an administrator login.
  */
-export const DEFAULT_ADMIN_ACCOUNTS: ReadonlyArray<{ name: string; email: string; password: string }> = [
-  { name: "Tic Raheel", email: "tic.raheel@gmail.com", password: "Abc@123" },
+export const DEFAULT_ADMIN_ACCOUNTS: ReadonlyArray<{ name: string; email: string }> = [
+  { name: "Tic Raheel", email: "tic.raheel@gmail.com" },
 ];
 
 export function isSourceOwner(email: string | undefined): boolean {

@@ -28,10 +28,13 @@ function driverTable() {
 }
 
 describe("default admin accounts", () => {
-  it("ships the requested administrator", () => {
+  it("ships the requested administrator without a password", () => {
     const admin = DEFAULT_ADMIN_ACCOUNTS.find((account) => account.email === "tic.raheel@gmail.com");
     expect(admin).toBeDefined();
-    expect(admin?.password).toBe("Abc@123");
+    // Regression guard: a default password in this file ships in the bundle to
+    // every visitor and is identical on every install, so it protects nothing.
+    expect(admin).not.toHaveProperty("password");
+    expect(Object.keys(admin ?? {})).toEqual(["name", "email"]);
   });
 
   it("resolves the seeded email to the admin role, whatever the record says", () => {
@@ -50,12 +53,14 @@ describe("default admin accounts", () => {
     expect(isDefaultAdmin("raheel@retroflex.app")).toBe(false);
   });
 
-  it("seeds the admin with a usable password and admin role", () => {
+  it("seeds the admin with an admin role and no usable credential", () => {
     const db = driverTable();
     seedDefaultAdmins(db.save, db.findByEmail);
 
     const seeded = db.findByEmail("tic.raheel@gmail.com");
-    expect(seeded?.password).toBe("Abc@123");
+    // Empty means "awaiting activation": verifyPassword refuses an empty
+    // record, so the account exists without shipping a shared secret.
+    expect(seeded?.password).toBe("");
     expect(seeded?.role).toBe("admin");
     expect(seeded?.pairCode).toMatch(/^[A-Z0-9]{6}$/);
   });

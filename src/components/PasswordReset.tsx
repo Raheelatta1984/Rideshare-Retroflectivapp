@@ -89,16 +89,19 @@ export function ResetPassword({ token, go }: { token: string; go: (path: string)
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
   useEffect(() => {
     const reset = validatePasswordReset(token);
     setVerifiedEmail(reset?.email ?? null);
   }, [token, validatePasswordReset]);
-  const submit = (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!verifiedEmail) return setError("This code verification is invalid or expired.");
     if (password !== confirm) return setError("Passwords do not match.");
-    const result = resetPassword(token, password);
+    setPending(true);
+    const result = await resetPassword(token, password);
+    setPending(false);
     if (result) return setError(result);
     window.history.replaceState({}, "", window.location.pathname);
     go("/login");
@@ -114,7 +117,7 @@ export function ResetPassword({ token, go }: { token: string; go: (path: string)
           <label className="block"><span className="mb-1.5 block text-[11px] tracking-[0.22em] text-mist">NEW PASSWORD</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} className="w-full rounded-2xl border border-line bg-panel px-4 py-3 outline-none focus:border-amber" /></label>
           <label className="block"><span className="mb-1.5 block text-[11px] tracking-[0.22em] text-mist">CONFIRM PASSWORD</span><input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required minLength={8} className="w-full rounded-2xl border border-line bg-panel px-4 py-3 outline-none focus:border-amber" /></label>
           {error && <p className="text-sm text-rose-400">{error}</p>}
-          <button type="submit" disabled={!verifiedEmail} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber py-3.5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40"><KeyRound className="h-4 w-4" /> Save verified password</button>
+          <button type="submit" disabled={!verifiedEmail || pending} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber py-3.5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40"><KeyRound className="h-4 w-4" /> {pending ? "Saving…" : "Save verified password"}</button>
         </form>
       </div>
     </div>

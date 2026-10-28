@@ -1,0 +1,19 @@
+{
+  "$comment": "Advisories accepted by scripts/audit.mjs. Keyed by advisory URL so a NEW advisory for the same package still fails the gate. Every entry must carry a reason and an expiry date; an expired entry fails the build on purpose.",
+  "advisories": [
+    {
+      "url": "https://github.com/advisories/GHSA-5gmw-xhrv-c9v3",
+      "package": "tinypool",
+      "severity": "critical",
+      "reason": "Transitive dev dependency of vitest (test runner). The gadget needs attacker-controlled worker options in the test runner; this repo runs `vitest run` on its own committed tests, never the Vitest UI or browser mode, and never with untrusted config. Fixed only by vitest 4/5, which npm cannot currently resolve against this lockfile.",
+      "expiresOn": "2027-01-31"
+    },
+    {
+      "url": "https://github.com/advisories/GHSA-85c8-ppgw-ccpr",
+      "package": "tinypool",
+      "severity": "critical",
+      "reason": "Same transitive dev-only worker pool (vitest). Same exposure argument as GHSA-5gmw-xhrv-c9v3.",
+      "expiresOn": "2027-01-31"
+    }
+  ]
+}

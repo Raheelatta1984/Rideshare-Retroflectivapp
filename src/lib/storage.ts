@@ -1,4 +1,6 @@
 import { normalizeDeviceProfile } from "./devices";
+import { constantTimeEqualText } from "./password";
+import { randomDigits, randomToken } from "./random";
 import type {
   ActivityLog,
   Driver,
@@ -6,6 +8,13 @@ import type {
   PasswordResetRecord,
   Ride,
 } from "../types";
+
+/**
+ * Wrong codes allowed per reset request before the request is burnt. The screen
+ * already told the user "five incorrect attempts invalidate the code"; this is
+ * the check that makes that sentence true.
+ */
+const MAX_RESET_ATTEMPTS = 5;
 
 const safeJsonParse = <T>(value: string | null, fallback: T): T => {
   if (!value) return fallback;
@@ -148,13 +157,16 @@ export const db = {
     );
     if (existing) return existing;
 
-    const code = String(Math.floor(1000 + Math.random() * 9000));
-    const token = `reset_${Math.random().toString(36).slice(2)}`;
+    // Six digits, as every screen promises, from the platform CSPRNG. A
+    // Math.random() code is guessable from a couple of earlier codes.
+    const code = randomDigits(6);
+    const token = randomToken();
     const record: PasswordResetRecord = {
       email,
       code,
       token,
       createdAt: Date.now(),
+      attempts: 0,
     };
 
     const next = [...resets, record];
@@ -171,23 +183,41 @@ export const db = {
 
   verifyPasswordReset: (email: string, code: string) => {
     const resets = db.listPasswordResets();
-    const match = resets.find(
-      (r) =>
-        r.email.toLowerCase() === email.toLowerCase() &&
-        r.code === code &&
-        !r.usedAt &&
-        Date.now() - r.createdAt < 30 * 60 * 1000, // 30 minutes
+    const candidate = resets.find(
+      (r) => r.email.toLowerCase() === email.toLowerCase() && !r.usedAt,
     );
 
-    if (!match) {
+    if (!candidate) {
       return { error: "Invalid or expired code" };
     }
 
+    const expired = Date.now() - candidate.createdAt >= 30 * 60 * 1000;
+    const exhausted = (candidate.attempts ?? 0) >= MAX_RESET_ATTEMPTS;
+    if (expired || exhausted) {
+      return {
+        error: exhausted ? "Too many incorrect attempts. Request a new code." : "Invalid or expired code",
+      };
+    }
+
+    if (!constantTimeEqualText(candidate.code, code.trim())) {
+      const attempts = (candidate.attempts ?? 0) + 1;
+      const next = resets.map((r) =>
+        r.token === candidate.token ? { ...r, attempts } : r,
+      );
+      localStorage.setItem("rf:password-resets", JSON.stringify(next));
+      return {
+        error:
+          attempts >= MAX_RESET_ATTEMPTS
+            ? "Too many incorrect attempts. Request a new code."
+            : "Invalid or expired code",
+      };
+    }
+
     const next = resets.map((r) =>
-      r.token === match.token ? { ...r, verifiedAt: Date.now() } : r,
+      r.token === candidate.token ? { ...r, verifiedAt: Date.now() } : r,
     );
     localStorage.setItem("rf:password-resets", JSON.stringify(next));
-    return { error: null, reset: { ...match, verifiedAt: Date.now() } };
+    return { error: null, reset: { ...candidate, verifiedAt: Date.now() } };
   },
 
   getPasswordReset: (token: string) => {
@@ -195,15 +225,22 @@ export const db = {
     return resets.find((r) => r.token === token);
   },
 
-  completePasswordReset: (token: string, password: string) => {
+  /**
+   * Apply a verified reset. `passwordHash` must already be hashed (see
+   * `src/lib/password.ts`); this layer stores credentials, it does not create
+   * them, and nothing here may write a clear-text password.
+   */
+  completePasswordReset: (token: string, passwordHash: string) => {
     const resets = db.listPasswordResets();
-    const match = resets.find((r) => r.token === token);
+    // Single use, and only after the emailed code proved the mailbox: a replay
+    // of an old link must not be able to set a password again.
+    const match = resets.find((r) => r.token === token && r.verifiedAt && !r.usedAt);
     if (!match) return null;
 
     const driver = db.findByEmail(match.email);
     if (!driver) return null;
 
-    const updatedDriver = { ...driver, password };
+    const updatedDriver = { ...driver, password: passwordHash };
     db.saveDriver(updatedDriver);
 
     const next = resets.map((r) =>

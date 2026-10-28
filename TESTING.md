@@ -110,16 +110,22 @@ screen ever does fail to render, an error boundary now shows a recovery page wit
 
 | Account | Password | Role | What it unlocks |
 | --- | --- | --- | --- |
-| `tic.raheel@gmail.com` | `Abc@123` | admin | Commercial signage and QA, the Phase 2 backend panel, campaign assignment. **Seeded on first boot** — no signup needed. |
+| `tic.raheel@gmail.com` | *activation required* — use **Forgot password** once | admin | Commercial signage and QA, the Phase 2 backend panel, campaign assignment. **The account is seeded on first boot but ships without a password** (see below). |
 | `raheel@retroflex.app` | *set via signup or password reset* | admin + source owner | Everything above, plus the Source Vault. |
 | `demo@retroflex.app` | `demo1234` | demo | Driver-facing console and tablet only. **The commercial sections stay hidden.** |
 | any new signup | — | driver | Sees the driver console; no signage tools. |
 
 Admin accounts are seeded by `seedDefaultAdmins()` in `src/lib/demo.ts` from
-`DEFAULT_ADMIN_ACCOUNTS` in `src/lib/access.ts`. An existing record is never
-overwritten, so a changed password survives. Set `VITE_SEED_DEFAULT_ADMINS=off`
-to ship a build with no administrator login at all — these are client-side
-credentials that gate the admin UI, not a server boundary.
+`DEFAULT_ADMIN_ACCOUNTS` in `src/lib/access.ts`. The list holds identities only:
+a password shipped in source would be identical on every install and readable in
+the bundle, so a seeded account starts locked and is activated through
+**Forgot password → email code → new password** (the same flow the source owner
+already used). Passwords are stored as PBKDF2-SHA256 hashes; a clear-text record
+written by an older build is upgraded on the next successful login. An existing
+record is never overwritten, so a changed password survives.
+Set `VITE_SEED_DEFAULT_ADMINS=off` to ship a build with no administrator login
+at all — these are client-side roles that gate the admin UI, not a server
+boundary. See `docs/security/credential-storage-review-2026-10-28.md`.
 
 ### One-click test setup
 
