@@ -154,7 +154,7 @@ src/components/DisplayScreen.tsx rear-window OS
 
 ```bash
 npm ci
-npm run verify     # typecheck + 55 tests + build + artifact checks
+npm run verify     # typecheck + tests + build + artifact checks + BFF smoke
 npm run dev -- --host 0.0.0.0
 ```
 
@@ -173,8 +173,23 @@ Environment variables are all optional — copy `.env.example` to `.env.local`:
 
 ### Security and runtime
 
-Use Node.js 22.12+ on the 22 line, Node 24, or Node 26+. Supabase
-sessions are memory-only and require login after reload. This is not a BFF or
-a complete security boundary. Read [production risks](docs/security/production-risks.md)
-before deploying shared or sensitive data, and rotate any previously exposed
-administrator password outside this repository.
+Use Node.js 22.12+ on the 22 line, Node 24, or Node 26+.
+
+There are two backends, and the choice is a deployment decision:
+
+| Adapter | Token location | Hosting it needs |
+| --- | --- | --- |
+| `bff` (recommended) | Server-side session; browser holds only an `HttpOnly` cookie | A Node host that also serves `/bff` — `server/bff` |
+| `supabase` (static-only) | Browser memory; login again after reload | Any static host, including GitHub Pages |
+
+```bash
+npm run bff:build && npm run bff:smoke    # build and verify the session service
+```
+
+- [docs/security/bff.md](docs/security/bff.md) — the session service, its threat model and env
+- [docs/security/rls-model.md](docs/security/rls-model.md) — who may read and write what in Postgres
+- [docs/security/administrator-credential-rotation.md](docs/security/administrator-credential-rotation.md) — required, out of band
+- [docs/security/production-risks.md](docs/security/production-risks.md) — the current ledger
+
+Data-plane infrastructure (PgBouncer, replicas, memcached, image shards) is in
+[INFRASTRUCTURE.md](./INFRASTRUCTURE.md).

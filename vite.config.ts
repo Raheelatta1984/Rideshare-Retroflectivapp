@@ -79,6 +79,12 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       allowedHosts: true,
+      // `BFF_DEV_PROXY=http://127.0.0.1:8080 npm run dev` forwards /bff to a
+      // locally running session service. changeOrigin stays false so the BFF
+      // sees the dev origin and can be listed in BFF_ALLOWED_ORIGINS.
+      proxy: process.env.BFF_DEV_PROXY
+        ? { "/bff": { target: process.env.BFF_DEV_PROXY, changeOrigin: false } }
+        : undefined,
     },
     preview: {
       host: true,

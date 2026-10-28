@@ -1,12 +1,18 @@
 # Credential storage, cookie, XSS and header review — 2026-10-28
 
 
-> **Update:** The historical findings below describe the earlier release. The
-> current adapter is memory-only by default and does not allow persistence via
-> the former environment variable. It deletes the old key on adapter startup;
-> devices must reauthenticate after reload. This is not an HttpOnly-cookie BFF
-> and does not prevent active XSS from using the session. The administrator
-> password still requires out-of-band rotation. See `production-risks.md`.
+> **Update (later on 2026-10-28):** The historical findings below describe the
+> release they were written against. Since then the BFF described in §6 has been
+> implemented (`server/bff`, `docs/security/bff.md`): sessions live server-side
+> behind a `__Host-rf_session` `HttpOnly` cookie, the browser never receives a
+> bearer token, and CSRF is enforced per session. Deployments that cannot host a
+> server (GitHub Pages) still fall back to the memory-only direct-Supabase
+> adapter described below. The Supabase policies in §1 have been replaced by
+> `0005_tenant_isolation.sql` and `0006_public_projections.sql`
+> (`docs/security/rls-model.md`). **The administrator password still requires
+> out-of-band rotation** — see
+> `docs/security/administrator-credential-rotation.md`. See
+> `production-risks.md` for the current ledger.
 
 Scope: credential material that JavaScript can read (localStorage / sessionStorage / IndexedDB /
 JS-set cookies), the XSS preconditions that make it exfiltratable, cookie transport, CSRF/CORS,
@@ -15,13 +21,14 @@ security headers and supply chain. One consolidated review for this repository.
 Repository: `Raheelatta1984/Rideshare-Retroflectivapp` · default branch `main` ·
 review branch `arena/210c8f85-rideshare-retroflectivapp`.
 
-> Follow-up: Vitest has been upgraded to 4.1.12 with a regenerated lockfile, and the
-> two tinypool exceptions removed. A clean install, all 370 tests, build, smoke and
-> audit pass; npm audit currently reports zero vulnerabilities. The BFF described
-> in §6 is still **not implemented**, so the default Supabase session remains in
-> browser storage. The historical observations and results below describe the
-> original review, not the current dependency versions. Pairing QRs are now
-> generated locally, and the Pages workflow actions are pinned by commit SHA.
+> Follow-up: dependencies were upgraded (Vitest 5, Vite 8, TypeScript 7) with a
+> regenerated lockfile; a clean install, the full test suite, build, smoke and
+> audit pass, and `npm audit` reports zero vulnerabilities. The BFF described in
+> §6 **has since been implemented** — see the banner above — so the default in
+> this repository is no longer "Supabase session in browser storage". The
+> historical observations and results below describe the original review, not
+> the current dependency versions. Pairing QRs are generated locally, and the
+> Pages workflow actions are pinned by commit SHA.
 
 ## 1. Stack and applicability verdict
 

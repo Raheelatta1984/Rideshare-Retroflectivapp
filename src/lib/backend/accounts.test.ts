@@ -265,23 +265,32 @@ describe("supabase accounts", () => {
     expect(result.error).toBe("Email or password is wrong.");
   });
 
-  it("confirms a code from the anon directory view, which carries no contact details", async () => {
+  it("confirms a code through the exact-match RPC and discloses nothing else", async () => {
     const { fetchImpl, calls } = fakeSupabase((url) =>
-      url.includes("booth_directory") ? { body: [{ ...boothRow, email: undefined }] } : { body: [] },
+      url.includes("rpc/resolve_pair_code") ? { body: { found: true, position: "front" } } : { body: [] },
     );
 
     const resolution = await createSupabaseBackend(config, fetchImpl).accounts.resolvePairCode("fr0nt1");
 
-    expect(resolution).toMatchObject({ code: "FR0NT1", verified: true, position: "front" });
-    expect(resolution.account?.name).toBe("Raheel Atta");
-    expect(resolution.account?.email).toBe("");
-    expect(calls[0].url).toContain("booth_directory");
-    expect(calls[0].url).toContain("or=(pair_code.eq.FR0NT1,front_pair_code.eq.FR0NT1)");
+    expect(resolution).toEqual({ code: "FR0NT1", position: "front", account: null, verified: true, error: null });
+    expect(calls[0].url).toContain("rpc/resolve_pair_code");
+    expect(calls[0].url).not.toContain("booth_directory");
     expect(calls[0].url).not.toContain("/booths?");
+    expect(calls[0].body).toContain("FR0NT1");
+    expect(calls[0].method).toBe("POST");
   });
 
-  it("degrades to the device when migration 0003 has not been applied", async () => {
-    const { fetchImpl } = fakeSupabase((url) => (url.includes("booth_directory") ? { status: 404, body: { message: "relation not found" } } : { body: [] }));
+  it("still refuses a malformed code before any request", async () => {
+    const { fetchImpl, calls } = fakeSupabase(() => ({ body: [] }));
+    const resolution = await createSupabaseBackend(config, fetchImpl).accounts.resolvePairCode("abc");
+    expect(resolution).toMatchObject({ verified: false, account: null, error: "A pair code is six characters." });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("degrades to the device when the RPC has not been applied", async () => {
+    const { fetchImpl } = fakeSupabase((url) =>
+      url.includes("rpc/resolve_pair_code") ? { status: 404, body: { message: "Could not find the function" } } : { body: [] },
+    );
     const resolution = await createSupabaseBackend(config, fetchImpl).accounts.resolvePairCode("7K2M9Q");
     expect(resolution).toMatchObject({ verified: false, account: null, error: null });
   });

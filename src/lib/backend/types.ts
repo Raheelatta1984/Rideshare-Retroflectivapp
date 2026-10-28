@@ -17,13 +17,17 @@ import type {
  *
  *   - `local.ts`    works offline today (device storage); used by the demo,
  *                   the tests and any deployment without a backend.
- *   - `supabase.ts` talks to Supabase Postgres + Storage + Realtime over REST.
+ *   - `supabase.ts` talks to Supabase Postgres + Storage + Realtime over REST,
+ *                 keeping the user's bearer token in browser memory.
+ *   - `bff.ts`      talks to the same-origin session service (server/bff),
+ *                   which keeps the bearer token server-side in an HttpOnly
+ *                   cookie. Preferred for any deployment that can host it.
  *
  * `index.ts` picks one at runtime. Nothing in the UI imports a provider
  * directly, so swapping providers never touches component code.
  */
 
-export type BackendKind = "local" | "supabase";
+export type BackendKind = "local" | "supabase" | "bff";
 
 export interface BackendInfo {
   kind: BackendKind;

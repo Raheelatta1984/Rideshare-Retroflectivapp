@@ -160,11 +160,14 @@ describe("readSupabaseConfig", () => {
 });
 
 describe("supabase backend — REST contract", () => {
-  it("sends the anon key on every request", async () => {
+  it("reads the public projection when there is no session", async () => {
+    // 0005 revokes anonymous access to public.campaigns; 0006 exposes approved
+    // rows through public_campaigns, so an anonymous display must use it.
     const { fetchImpl, calls } = fakeBackend(() => ({ body: [] }));
     await createSupabaseBackend(config, fetchImpl).campaigns.list();
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toContain("/rest/v1/campaigns");
+    expect(calls[0].url).toContain("/rest/v1/public_campaigns");
+    expect(calls[0].url).not.toContain("/rest/v1/campaigns?");
   });
 
   it("unwraps campaigns from their payload column and orders by updated_at", async () => {

@@ -1,38 +1,87 @@
 # Production security status
 
-These changes reduce risk but do not make the application secure against every
-attack. Do not use the current shared Supabase setup for sensitive or
-multi-tenant data without addressing the following:
+Last updated 2026-10-28. This file is the honest ledger: what is fixed in the
+repository, what is fixed only once you deploy it, and what no repository can
+fix. Read the **Open** table first.
 
-* Rotate the previously exposed administrator password **out of band**, revoke
-  existing sessions where applicable, and review login/audit activity. Removing
-  a credential from source does not invalidate a leaked password. No live
-  administrator account was accessed or rotated by this change.
-* The Supabase BFF is not implemented. Tokens now live only in browser memory;
-  reload requires login. Active malicious JavaScript can still use them. Build a
-  same-origin BFF with an opaque, Secure, HttpOnly, SameSite cookie, CSRF/origin
-  validation, a durable session store, rotation/revocation, and server-side
-  authorization before restoring persistent sessions. A static GitHub Pages
-  deployment alone cannot host that service.
-* `0001_signage_phase2.sql` permits public reads of all campaign payloads and
-  events, not just approved campaigns or aggregates. Any authenticated user
-  can write or delete any campaign; approval audit and asset policies are also
-  broad. `0003_terminal_signup.sql` exposes an enumerable booth directory with
-  pair codes. These are not tenant isolation or authorization boundaries. The
-  policies in a live Supabase project may differ; inspect them there. Restrict
-  public exposure immediately at the deployment level if sensitive data is
-  present. A safe replacement requires ownership/role models, separate public
-  projections, authenticated device access and RLS integration tests; simply
-  changing policies here could break displays and existing data access.
-* Local accounts, reset codes, and session pointers are browser-local, not a
-  server-enforced identity or authorization boundary. Never use them to protect
-  privileged or confidential resources. Peer pair codes are not a substitute
-  for authenticated communication.
-* Public `VITE_*` values are included in the browser bundle. Do not put secrets
-  in them. In particular, the current manifest implementation uses a symmetric
-  HMAC key; a browser verification key is also capable of signing. Use
-  asymmetric signatures and server-only private keys for trusted manifests.
+## Open — requires a human, out of band
+
+| # | Risk | Why code cannot close it | Action |
+| --- | --- | --- | --- |
+| 1 | **Leaked administrator password** | The literal shipped in `src/lib/access.ts` and is in the public git history. Removing it from the current tree does not invalidate it. | Follow `docs/security/administrator-credential-rotation.md`: rotate at the identity provider, revoke sessions, review sign-in history, rotate the Supabase user and API keys. `scripts/rotate-admin-credential.mjs` automates the Supabase part. **Until this is done, treat the credential as live.** |
+| 2 | **The live deployment may not match this repository** | Policies, env vars, bucket visibility and CDN headers are deployment state. This repo cannot read them. | Run the verification block in `docs/security/rls-model.md` against the real project; open the deployed app with DevTools and confirm one CSP header, one `__Host-rf_session` cookie and zero `Refused to …` lines. |
+| 3 | **Not every host can run the BFF** | GitHub Pages is static: it cannot set an `HttpOnly` cookie, so a Pages deployment stays on the memory-only direct-Supabase adapter. | Deploy `server/bff` on a Node host (`docs/security/bff.md`) if the deployment holds anything worth stealing; otherwise accept risk #4 knowingly. |
+
+## Fixed in code
+
+| Risk | Fix | Evidence |
+| --- | --- | --- |
+| Shared admin password in source and bundle | Literal removed; the seeded account starts locked and must be activated through the reset flow | `src/lib/access.ts`, `src/lib/demo.ts`, `src/lib/security/*` |
+| Local passwords in cleartext | PBKDF2-SHA256 (210k iterations, per-record salt), constant-time verify, migrate-on-login | `src/lib/password.ts` + tests |
+| Predictable reset codes | CSPRNG six-digit codes and 128-bit tokens, single use, five-attempt cap | `src/lib/storage.ts` + tests |
+| Token in browser storage | Session tokens live server-side (BFF); cookie is `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`; the direct adapter is memory-only and deletes the legacy key | `server/bff/*`, `src/lib/backend/bff.ts`, `src/lib/backend/supabase.ts` |
+| No CSRF protection | Derived per-session CSRF token + exact-origin check + JSON content type on every state-changing route | `server/bff/router.ts`, `server/bff/router.test.ts` |
+| Webhook signature fail-open | Fails closed, length-safe compare | `scripts/webhook-handler.ts` |
+| No security headers | Vercel header set, build-injected hash-pinned `<meta>` CSP, and the BFF server sends the header-only directives too | `vercel.json`, `scripts/csp.mjs`, `server/bff/node.ts` |
+| `using (true)` policies on campaign data | 0005/0006 replace them with ownership + reviewer roles; anonymous access is limited to `public_campaigns` | `supabase/migrations/0005…`, `0006…`, `supabase/tests/rls.test.ts` (33 assertions on real Postgres) |
+| Enumerable booth directory | View dropped; exact-match `resolve_pair_code()` returns `{found, position}` only; BFF rate limits lookups | `0006`, `server/bff/router.ts` |
+| Consent PII in campaign payloads | Public projection redacts the six consent records to booleans + "on file" | `0006` |
+| Anonymous reads of event telemetry | Revoked; the rollup view is `security_invoker` | `0005` |
+| Any signed-in user could rewrite any campaign's assets | Storage policies scoped to the owning campaign's folder | `0005` |
+| Any signed-in user could rebalance the id plane | Reviewer-only; `next_id()` no longer executable by browser roles | `0005` |
+| Manifest signing key in the browser | With the BFF, signing happens server-side (`POST /bff/manifest`) and the browser holds no key | `server/bff/router.ts`, `src/lib/backend/bff.ts` |
+| Dependency advisories | `npm run audit` gate + Dependabot; allowlist is empty | `.github/security/audit-allowlist.json`, CI |
+
+## Accepted residual risks
+
+* **XSS still acts as the user.** `HttpOnly` stops token theft, not token use. A
+  script on the origin can call the same endpoints the UI calls for as long as
+  the page is open. The controls are the hash-pinned CSP, the storage guard that
+  forbids HTML sinks, and the audit trail — not the cookie.
+* **The BFF is one process per deployment.** Its rate limiter is per-instance
+  unless a shared memcached is configured (`BFF_*_LIMIT`); multi-instance
+  deployments should also front it with the platform's edge limiter.
+* **The campaigns storage bucket is public.** The creative is displayed in
+  traffic; that exposure is the product. Writes are owner-scoped. To make reads
+  private, flip `storage.buckets.public` to `false` — the read policy in 0005 is
+  already correct for that — and switch `assetUrl` to `assets.signedUrl()`.
+* **Local booth accounts are a UX convenience, not an authorization boundary.**
+  They live in the same origin's `localStorage` as the session pointer and reset
+  codes. Never use them to protect privileged or confidential resources; the
+  boundary is Postgres RLS plus the BFF.
+* **Pair codes are 31 bits.** Safe only because lookup is exact-match, rate
+  limited and returns nothing identifying. Do not reuse them as secrets.
+* **`VITE_*` values are public.** Do not put secrets in them. With the BFF the
+  only remaining one is the Supabase anon key and the Supabase URL, which are
+  public by design.
+* **The HMAC manifest is symmetric when the BFF is not used.** A browser that can
+  verify can also sign, so a static-only deployment cannot have trusted
+  manifests. Use the BFF, or move to Ed25519 with a server-held private key
+  (tracked, not done).
+
+## What was verified here, and what was not
+
+Verified in this repository, in CI:
+
+* Static-only leaks: no tracked `.env`, no `dangerouslySetInnerHTML`/`innerHTML`,
+  no `document.cookie =` (enforced by `npm run security:storage`).
+* BFF behaviour: 45 unit tests plus 33 real-HTTP smoke checks on the built
+  bundle (cookie attributes, CSRF, origin, rotation, revocation, traversal,
+  "no token in any response").
+* Database policies: `npm test` applies `0001`–`0006` to a real PostgreSQL
+  (PGlite/WASM) and exercises them as `anon`, two drivers and a reviewer
+  (33 assertions), plus a static migration audit.
+* Build output: hash-pinned CSP, header set, smoke checks.
+
+Not verified here, because it needs the real deployment:
+
+* The live Supabase project's actual policies, bucket visibility and grants.
+* The hosting layer's headers (Pages sends none; Vercel and the BFF do).
+* Any browser-level behaviour: there is no browser harness, so CSP enforcement
+  is verified statically (hash matches the emitted script, no eval-like
+  constructs) rather than by watching a console.
+* Whether the leaked password still works anywhere. Only rotation settles that.
 
 Security controls must be verified against the actual deployment, database
-policies, logs, and infrastructure; this repository alone cannot prove those
-settings or revoke leaked credentials.
+policies, logs and infrastructure. This repository alone cannot prove those
+settings, and it cannot revoke a leaked credential.

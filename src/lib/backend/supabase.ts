@@ -90,11 +90,23 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
     return response;
   }
 
+  /**
+   * Which relation a campaign read goes to.
+   *
+   * Migration 0005 revokes every anonymous privilege on `public.campaigns`;
+   * the only anonymous read path is the `public_campaigns` projection from 0006
+   * (approved rows, consent PII redacted). Signed-in reads keep going to the
+   * table, where RLS scopes them to owned + approved rows.
+   */
+  function campaignsRelation(): "campaigns" | "public_campaigns" {
+    return readStoredSession() ? "campaigns" : "public_campaigns";
+  }
+
   async function selectCampaigns(query: CampaignQuery = {}): Promise<CommercialCampaign[]> {
     const params = new URLSearchParams({ select: "*", order: "updated_at.desc" });
     if (query.since) params.set("updated_at", `gt.${new Date(query.since).toISOString()}`);
     if (query.limit) params.set("limit", String(query.limit));
-    const response = await request(`campaigns?${params.toString()}`);
+    const response = await request(`${campaignsRelation()}?${params.toString()}`);
     const rows = (await response.json()) as CampaignRow[];
     return rows.map((row) => row.payload).filter(Boolean);
   }
@@ -102,7 +114,7 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
   const campaigns: CampaignRepository = {
     list: selectCampaigns,
     async get(id) {
-      const response = await request(`campaigns?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
+      const response = await request(`${campaignsRelation()}?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
       const rows = (await response.json()) as CampaignRow[];
       return rows[0]?.payload ?? null;
     },
@@ -447,36 +459,27 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
         return { code, position: "rear", account: null, verified: false, error: "A pair code is six characters." };
       }
       try {
-        // The directory view is anon-readable and deliberately excludes email and
-        // phone: confirming a code must not become a way to harvest contacts.
-        const response = await fetchImpl(
-          rest(`booth_directory?select=*&or=(pair_code.eq.${code},front_pair_code.eq.${code})&limit=1`),
-          { headers },
-        );
-        if (!response.ok) throw new Error(`directory ${response.status}`);
-        const rows = (await response.json()) as BoothRow[];
-        const booth = rows[0];
-        if (!booth) return { code, position: "rear", account: null, verified: false, error: null };
+        // 0006 replaces the anon-readable `booth_directory` view (which listed
+        // every booth, owner and code) with an exact-match function that returns
+        // only {found, position}. No account is adopted here on purpose: the
+        // lookup confirms the code, it does not disclose who owns it.
+        const response = await fetchImpl(rest("rpc/resolve_pair_code"), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ p_code: code }),
+        });
+        if (!response.ok) throw new Error(`pair code ${response.status}`);
+        const result = (await response.json()) as { found?: boolean; position?: string } | null;
         return {
           code,
-          position: normalizePairCode(booth.front_pair_code) === code ? "front" : "rear",
-          account: {
-            id: booth.owner ?? booth.id,
-            name: booth.name ?? "Retroflex booth",
-            email: "",
-            phone: "",
-            city: booth.city ?? "",
-            pairCode: booth.pair_code,
-            frontPairCode: booth.front_pair_code ?? undefined,
-            createdAt: booth.created_at ?? new Date().toISOString(),
-            source: "supabase",
-          },
-          verified: true,
+          position: result?.position === "front" ? "front" : "rear",
+          account: null,
+          verified: Boolean(result?.found),
           error: null,
         };
       } catch {
-        // Migration 0003 not applied, or offline: fall back to whatever this
-        // device already knows, and let the code pair over the sync channel.
+        // Migration not applied, or offline: fall back to whatever this device
+        // already knows, and let the code pair over the sync channel.
         return localFallback.accounts.resolvePairCode(code);
       }
     },

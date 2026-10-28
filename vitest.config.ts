@@ -7,7 +7,10 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}", "server/**/*.test.ts", "scripts/**/*.test.ts"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "server/**/*.test.ts", "scripts/**/*.test.ts", "supabase/**/*.test.ts"],
+    // PGlite (the RLS harness) is a WASM Postgres; give the migration run room.
+    testTimeout: 30_000,
+    hookTimeout: 120_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "json-summary"],

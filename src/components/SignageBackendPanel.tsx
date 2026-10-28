@@ -43,7 +43,7 @@ export function SignageBackendPanel({
     void load();
     return backend.subscribe(() => {
       void load();
-    }, { pollMs: info.kind === "supabase" ? 15000 : 0 });
+    }, { pollMs: info.kind === "local" ? 0 : 15000 });
   }, [backend, info.kind, load]);
 
   const review = async (id: string, state: "approved" | "rejected") => {
@@ -86,7 +86,7 @@ export function SignageBackendPanel({
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-[11px] tracking-[0.32em] text-amber">Commercial backend</h2>
         <span className="flex items-center gap-2 rounded-full border border-line px-2.5 py-1 text-[10px] text-mist">
-          {info.kind === "supabase" ? <Cloud className="h-3 w-3" /> : <HardDrive className="h-3 w-3" />}
+          {info.kind === "local" ? <HardDrive className="h-3 w-3" /> : <Cloud className="h-3 w-3" />}
           {info.label}
           <span className={info.configured ? "text-amber" : "text-mist"}>{info.configured ? "· live" : "· not configured"}</span>
         </span>

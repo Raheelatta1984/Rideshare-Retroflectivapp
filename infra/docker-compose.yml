@@ -10,11 +10,13 @@
 # the local adapter or talks to Supabase over REST.
 #
 #   docker compose -f infra/docker-compose.yml up
+#   docker compose -f infra/docker-compose.yml --profile bff up   # + session service
 #
 # Endpoints after `up`:
 #   postgres  localhost:5432  (user retroflex / password retroflex / db retroflex)
 #   pgbouncer localhost:6543  (same credentials — point DATABASE_URL here)
 #   memcached localhost:11211
+#   bff       localhost:8080  (profile "bff": SPA + /bff on one origin)
 
 services:
   postgres:
@@ -55,6 +57,33 @@ services:
       - "6543:6543"
     volumes:
       - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+
+  # The session service (server/bff). Off by default so the data-plane stack
+  # stays light: `docker compose --profile bff up`. It serves the built SPA and
+  # /bff from one origin, which is what makes the HttpOnly session cookie work.
+  bff:
+    profiles: ["bff"]
+    build:
+      context: ..
+      dockerfile: server/bff/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BFF_PORT: "8080"
+      BFF_HOST: 0.0.0.0
+      BFF_STATIC_DIR: /app/dist
+      BFF_SESSION_STORE: postgres
+      BFF_DATABASE_URL: postgres://retroflex:retroflex@pgbouncer:6543/retroflex
+      # Development-only values. Generate real ones for any deployment:
+      #   openssl rand -base64 32   (BFF_CSRF_SECRET and BFF_SESSION_KEY)
+      SUPABASE_URL: ${SUPABASE_URL:-http://host.docker.internal:54321}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-local-anon-key}
+      BFF_CSRF_SECRET: ${BFF_CSRF_SECRET:-development-only-csrf-secret-change-me}
+      BFF_SESSION_KEY: ${BFF_SESSION_KEY:-}
+      BFF_ALLOWED_ORIGINS: ${BFF_ALLOWED_ORIGINS:-http://localhost:8080}
+    ports:
+      - "8080:8080"
 
   memcached:
     image: memcached:1.6-alpine

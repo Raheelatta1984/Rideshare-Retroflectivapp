@@ -111,8 +111,13 @@ export interface TerminalAccount {
   frontPairCode?: string;
   role?: DriverRole;
   createdAt: string;
-  /** Which adapter produced/verified this account. */
-  source: "local" | "supabase";
+  /**
+   * Which adapter produced/verified this account.
+   *
+   * `bff` means the account was resolved by the same-origin session service
+   * (server/bff), which holds the upstream tokens so the browser never does.
+   */
+  source: "local" | "supabase" | "bff";
 }
 
 /** How a terminal reached the sign-up flow. Recorded on the binding for audit. */

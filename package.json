@@ -14,8 +14,12 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "smoke": "node scripts/smoke.mjs",
-    "verify": "npm run typecheck && npm run test && npm run build && npm run smoke",
+    "verify": "npm run typecheck && npm run test && npm run build && npm run bff:build && npm run smoke && npm run bff:smoke",
     "audit": "node scripts/audit.mjs",
+    "bff:build": "vite build --config vite.bff.config.ts",
+    "bff:smoke": "node scripts/bff-smoke.mjs",
+    "security:rls": "vitest run supabase/tests/rls.test.ts scripts/sql-policy-audit.test.ts",
+    "security:rotate": "node scripts/rotate-admin-credential.mjs",
     "security:storage": "vitest run src/lib/security/storage-guard.test.ts"
   },
   "dependencies": {
@@ -30,6 +34,7 @@
     "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.13",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.3",

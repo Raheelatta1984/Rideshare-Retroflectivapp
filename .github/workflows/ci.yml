@@ -27,9 +27,15 @@ jobs:
         run: npm test
       - name: No credentials in web storage
         run: npm run security:storage
+      - name: Database policy audit (real Postgres, PGlite)
+        run: npm run security:rls
       - name: Dependency audit (High/Critical)
         run: npm run audit
       - name: Build
         run: npm run build
       - name: Build artifact checks
         run: npm run smoke
+      - name: Build the session service (BFF)
+        run: npm run bff:build
+      - name: Session service smoke (real HTTP)
+        run: npm run bff:smoke

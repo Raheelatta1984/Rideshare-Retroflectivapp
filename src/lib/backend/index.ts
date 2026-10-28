@@ -1,13 +1,20 @@
 import type { Backend } from "./types";
 import { createLocalBackend } from "./local";
 import { createSupabaseBackend, readSupabaseConfig } from "./supabase";
+import { createBffBackend, readBffConfig } from "./bff";
 
 /**
  * Provider selection.
  *
- *   VITE_BACKEND=supabase   force Supabase (fails closed to local if unconfigured)
+ *   VITE_BFF_BASE=/bff      use the same-origin session service (server/bff)
+ *   VITE_BACKEND=bff        force the same-origin session service
+ *   VITE_BACKEND=supabase   force the direct Supabase adapter (token in memory)
  *   VITE_BACKEND=local      force the on-device adapter
- *   (unset)                 use Supabase when its env vars are present, else local
+ *   (unset)                 BFF when configured, else Supabase, else local
+ *
+ * The BFF is preferred whenever it exists: it is the only adapter where the
+ * browser never holds a bearer token. The direct Supabase adapter is kept for
+ * deployments that are still static-only (GitHub Pages cannot host a server).
  *
  * The rest of the app only ever sees `Backend`, so switching providers is a
  * config change, not a code change.
@@ -16,6 +23,7 @@ import { createSupabaseBackend, readSupabaseConfig } from "./supabase";
 export * from "./types";
 export { createLocalBackend, newEventId, toTerminalAccount, uniquePairCode } from "./local";
 export { createSupabaseBackend, readSupabaseConfig } from "./supabase";
+export { createBffBackend, readBffConfig } from "./bff";
 export { issueManifest, verifyManifest, buildManifestEntries, canonicalize } from "./manifest";
 export { EventQueue } from "./queue";
 
@@ -30,11 +38,18 @@ export function resolveBackend(): Backend {
 
   const environment = env();
   const requested = environment.VITE_BACKEND;
-  const config = readSupabaseConfig(environment);
-  const wantsSupabase = requested === "supabase" || (requested !== "local" && config !== null);
+  const bffConfig = readBffConfig(environment);
+  const supabaseConfig = readSupabaseConfig(environment);
 
-  if (wantsSupabase && config) {
-    cached = createSupabaseBackend(config);
+  const wantsBff = requested === "bff" || (requested !== "local" && bffConfig !== null);
+  if (wantsBff && bffConfig) {
+    cached = createBffBackend(bffConfig);
+    return cached;
+  }
+
+  const wantsSupabase = requested === "supabase" || (requested !== "local" && supabaseConfig !== null);
+  if (wantsSupabase && supabaseConfig) {
+    cached = createSupabaseBackend(supabaseConfig);
     return cached;
   }
 
