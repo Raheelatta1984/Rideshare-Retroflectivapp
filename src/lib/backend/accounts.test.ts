@@ -332,3 +332,39 @@ describe("supabase terminal registry", () => {
     expect(retry?.body).toContain('"pair_code":"7K2M9Q"');
   });
 });
+
+describe("local accounts — credential storage", () => {
+  it("never writes the clear-text password to the booth table", async () => {
+    const backend = createLocalBackend();
+    await backend.accounts.signUp(signUpInput);
+
+    const stored = db.findByEmail(signUpInput.email)?.password ?? "";
+    expect(stored).toMatch(/^pbkdf2-sha256\$\d+\$[^$]+\$[^$]+$/);
+    expect(stored).not.toContain(signUpInput.password);
+    // …and the plaintext still verifies, then keeps verifying after a reload.
+    expect((await backend.accounts.signIn(signUpInput)).error).toBeNull();
+  });
+
+  it("upgrades a booth created by an older build on the next sign-in", async () => {
+    const legacy = { ...signUpInput, email: "legacy@retroflex.app", password: "legacy-clear-text" };
+    db.saveDriver({
+      id: "drv_legacy",
+      name: legacy.name,
+      email: legacy.email,
+      phone: "",
+      password: legacy.password,
+      city: "Sydney",
+      pairCode: "7K2M9Q",
+      createdAt: new Date().toISOString(),
+      platforms: ["uber"],
+      vehicle: { make: "", model: "", color: "", plate: "", year: "" },
+      role: "driver",
+    });
+
+    const backend = createLocalBackend();
+    const result = await backend.accounts.signIn({ email: legacy.email, password: legacy.password });
+
+    expect(result.error).toBeNull();
+    expect(db.findByEmail(legacy.email)?.password).toMatch(/^pbkdf2-sha256\$/);
+  });
+});

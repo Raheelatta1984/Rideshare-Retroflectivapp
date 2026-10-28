@@ -40,7 +40,7 @@ security posture and the Supabase path are in **[TERMINAL-SIGNUP.md](./TERMINAL-
 
 The complete source archive is available only after login through **Booth → Owner Source Vault** for:
 
-- `tic.raheel@gmail.com`
+- `tic.raheel@gmail.com` (seeded without a password — activate it once with **Forgot password**)
 - `driver@retroflex.app` / `demo1234`
 
 The download is generated in the authorized browser session as `Rideshare-Retroflectivapp.zip`.

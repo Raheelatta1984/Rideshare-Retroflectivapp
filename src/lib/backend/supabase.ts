@@ -252,6 +252,35 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
   const SESSION_KEY = "rf:backend:supabase-session";
   const localFallback = createLocalBackend({ secret: config.manifestKey, keyId: config.manifestKeyId });
 
+  /**
+   * Where the GoTrue session lives between page loads.
+   *
+   * Default: `localStorage`, so a mounted tablet survives a reload. That is
+   * script-readable by design — an XSS bug on this origin can exfiltrate the
+   * refresh token. Until the app has a BFF that can hold the session behind an
+   * `HttpOnly` cookie (see docs/security/credential-storage-review-2026-10-28.md),
+   * a deployment that can tolerate re-login can opt out of persistence:
+   *
+   *   VITE_SUPABASE_SESSION_PERSISTENCE=memory
+   *
+   * In memory mode the tokens live only in this module for the life of the tab,
+   * and any token left behind by an earlier build is deleted on boot.
+   */
+  const persistsSession = (() => {
+    const mode = String(import.meta.env?.VITE_SUPABASE_SESSION_PERSISTENCE ?? "").trim().toLowerCase();
+    return !(mode === "memory" || mode === "none" || mode === "off");
+  })();
+
+  let inMemorySession: StoredSession | null = null;
+
+  if (!persistsSession && typeof localStorage !== "undefined") {
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch {
+      // Storage unavailable: there is nothing to purge.
+    }
+  }
+
   interface StoredSession {
     accessToken: string;
     refreshToken?: string;
@@ -292,6 +321,7 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
   }
 
   function readStoredSession(): StoredSession | null {
+    if (!persistsSession) return inMemorySession;
     if (typeof localStorage === "undefined") return null;
     try {
       const raw = localStorage.getItem(SESSION_KEY);
@@ -304,6 +334,10 @@ export function createSupabaseBackend(config: SupabaseConfig, fetchImpl: typeof 
   }
 
   function writeStoredSession(session: StoredSession | null): void {
+    if (!persistsSession) {
+      inMemorySession = session;
+      return;
+    }
     if (typeof localStorage === "undefined") return;
     try {
       if (!session) localStorage.removeItem(SESSION_KEY);

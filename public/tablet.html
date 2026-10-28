@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Static page, no build step: its only script is ./tablet.js, so a
+         self-only policy is enough. frame-ancestors is ignored in a meta tag
+         and is served as a header by vercel.json. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#050505" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -64,25 +68,6 @@
         <button type="submit">Arm display</button>
       </form>
     </main>
-    <script>
-      (function () {
-        var params = new URLSearchParams(window.location.search);
-        var code = params.get("display");
-        var position = params.get("position") === "front" ? "front" : "rear";
-        document.getElementById("position-label").textContent = "Retroflex · " + (position === "front" ? "Front" : "Rear") + " Tablet";
-        var root = window.location.pathname.replace(/tablet\.html$/, "");
-        if (!root.endsWith("/")) root += "/";
-        function openDisplay(value) {
-          var clean = String(value || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
-          if (clean.length !== 6) return;
-          window.location.replace(root + "?mode=tablet&position=" + position + "&display=" + encodeURIComponent(clean));
-        }
-        if (code) openDisplay(code);
-        document.getElementById("pair-form").addEventListener("submit", function (event) {
-          event.preventDefault();
-          openDisplay(document.getElementById("pair-code").value);
-        });
-      })();
-    </script>
+    <script src="./tablet.js" defer></script>
   </body>
 </html>

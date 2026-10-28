@@ -5,6 +5,7 @@ import { useStore } from "../store";
 export function Auth({ mode, go }: { mode: "login" | "signup"; go: (p: string) => void }) {
   const { login, signup } = useStore();
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -13,12 +14,16 @@ export function Auth({ mode, go }: { mode: "login" | "signup"; go: (p: string) =
     city: "",
   });
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPending(true);
+    // Hashing runs in WebCrypto, so both calls are async and the button has to
+    // say it is working rather than appearing to ignore the click.
     const err =
       mode === "login"
-        ? login(form.email, form.password)
-        : signup({ name: form.name, email: form.email, password: form.password, phone: form.phone, city: form.city });
+        ? await login(form.email, form.password)
+        : await signup({ name: form.name, email: form.email, password: form.password, phone: form.phone, city: form.city });
+    setPending(false);
     if (err) setError(err);
     else go(mode === "signup" ? "/onboarding" : "/app");
   };
@@ -59,8 +64,8 @@ export function Auth({ mode, go }: { mode: "login" | "signup"; go: (p: string) =
             </>
           )}
           {error && <p className="text-sm text-rose-400">{error}</p>}
-          <button type="submit" className="w-full rounded-2xl bg-amber py-3.5 font-semibold text-ink">
-            {mode === "login" ? "Enter console" : "Create booth"}
+          <button type="submit" disabled={pending} className="w-full rounded-2xl bg-amber py-3.5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60">
+            {pending ? "Working…" : mode === "login" ? "Enter console" : "Create booth"}
           </button>
         </form>
         <p className="mt-6 text-sm text-mist">

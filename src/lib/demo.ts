@@ -46,14 +46,21 @@ export function defaultAdminSeedEnabled(): boolean {
   return !(raw === "off" || raw === "false" || raw === "0");
 }
 
-/** The administrator records provisioned on a fresh install. */
+/**
+ * The administrator records provisioned on a fresh install.
+ *
+ * The password is intentionally empty: the account exists (so the role, pair
+ * codes and settings are ready) but cannot be entered until the owner sets a
+ * password through the reset flow. A shipped default password would be the same
+ * secret on every device and readable in the bundle.
+ */
 export function defaultAdminDrivers(): Driver[] {
   return DEFAULT_ADMIN_ACCOUNTS.map((account) => ({
     id: uid("drv"),
     name: account.name,
     email: account.email,
     phone: "",
-    password: account.password,
+    password: "",
     city: "Sydney",
     pairCode: pairCode(),
     frontPairCode: pairCode(),

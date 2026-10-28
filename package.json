@@ -14,31 +14,36 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "smoke": "node scripts/smoke.mjs",
-    "verify": "npm run typecheck && npm run test && npm run build && npm run smoke"
+    "verify": "npm run typecheck && npm run test && npm run build && npm run smoke",
+    "audit": "node scripts/audit.mjs",
+    "security:storage": "vitest run src/lib/security/storage-guard.test.ts"
   },
   "dependencies": {
     "clsx": "2.1.1",
-    "jspdf": "^4.2.1",
-    "jszip": "^3.10.1",
-    "lucide-react": "^1.31.0",
-    "peerjs": "^1.5.5",
+    "jspdf": "4.2.1",
+    "jszip": "3.10.2",
+    "lucide-react": "1.51.0",
+    "peerjs": "1.5.5",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "tailwind-merge": "3.4.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.0.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.3",
     "@types/node": "22.19.17",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
-    "jsdom": "^25.0.1",
+    "jsdom": "25.0.1",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
-    "vite": "7.3.2",
+    "vite": "7.3.7",
     "vite-plugin-singlefile": "2.3.0",
-    "vitest": "^2.1.8"
+    "vitest": "3.2.6"
+  },
+  "overrides": {
+    "dompurify": "3.4.17"
   }
 }

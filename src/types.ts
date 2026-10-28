@@ -458,6 +458,8 @@ export interface PasswordResetRecord {
   createdAt: number;
   verifiedAt?: number;
   usedAt?: number;
+  /** Wrong codes entered against this request; the request dies at five. */
+  attempts?: number;
 }
 
 export interface Platform {

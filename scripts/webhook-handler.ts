@@ -46,23 +46,33 @@ interface DeployResponse {
   url?: string;
 }
 
-// Verify GitHub webhook signature
-function verifyGitHubSignature(body: string, signature: string): boolean {
+/**
+ * Verify GitHub webhook signature (HMAC-SHA256, `X-Hub-Signature-256`).
+ *
+ * Fails CLOSED: without a configured secret there is no way to tell a real
+ * delivery from anyone who can reach the URL, and this endpoint triggers a
+ * deployment, so an unverifiable request is rejected. (The previous version
+ * logged a warning and returned true, which let an unauthenticated caller
+ * deploy.) The comparison runs over equal-length digests because
+ * `timingSafeEqual` throws on a length mismatch — a malformed header must be a
+ * 401, not a 500.
+ */
+export function verifyGitHubSignature(body: string, signature: string): boolean {
   if (!GITHUB_WEBHOOK_SECRET) {
-    console.warn('⚠️  GITHUB_WEBHOOK_SECRET not set - skipping verification');
-    return true;
+    console.error('❌ GITHUB_WEBHOOK_SECRET is not configured - rejecting webhook');
+    return false;
   }
-  
-  const hash = crypto
-    .createHmac('sha256', GITHUB_WEBHOOK_SECRET)
-    .update(body)
-    .digest('hex');
-  
-  const expectedSignature = `sha256=${hash}`;
-  return crypto.timingSafeEqual(
-    Buffer.from(expectedSignature),
-    Buffer.from(signature)
+
+  if (typeof signature !== 'string' || !signature.startsWith('sha256=')) return false;
+
+  const expected = Buffer.from(
+    `sha256=${crypto.createHmac('sha256', GITHUB_WEBHOOK_SECRET).update(body).digest('hex')}`,
+    'utf8'
   );
+  const received = Buffer.from(signature, 'utf8');
+  if (expected.length !== received.length) return false;
+
+  return crypto.timingSafeEqual(expected, received);
 }
 
 // Trigger Arena.ai deployment
