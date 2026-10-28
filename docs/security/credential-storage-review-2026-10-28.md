@@ -1,5 +1,13 @@
 # Credential storage, cookie, XSS and header review — 2026-10-28
 
+
+> **Update:** The historical findings below describe the earlier release. The
+> current adapter is memory-only by default and does not allow persistence via
+> the former environment variable. It deletes the old key on adapter startup;
+> devices must reauthenticate after reload. This is not an HttpOnly-cookie BFF
+> and does not prevent active XSS from using the session. The administrator
+> password still requires out-of-band rotation. See `production-risks.md`.
+
 Scope: credential material that JavaScript can read (localStorage / sessionStorage / IndexedDB /
 JS-set cookies), the XSS preconditions that make it exfiltratable, cookie transport, CSRF/CORS,
 security headers and supply chain. One consolidated review for this repository.

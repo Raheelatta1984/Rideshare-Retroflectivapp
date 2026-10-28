@@ -33,7 +33,7 @@ const ALLOWLIST: Array<{ file: string; why: string }> = [
   },
   {
     file: "src/lib/backend/supabase.ts",
-    why: "Supabase access/refresh token persistence — DECISION REQUIRED: needs a BFF for HttpOnly cookies (finding 3); opt-in memory mode added.",
+    why: "Legacy Supabase session key is removed on boot; bearer tokens are only kept in memory.",
   },
 ];
 
@@ -70,6 +70,12 @@ describe("no credentials in script-readable storage", () => {
       expect(entry.why.length, `${entry.file} needs a reason`).toBeGreaterThan(20);
       expect(hits.has(entry.file), `${entry.file} no longer matches — drop the allowlist entry`).toBe(true);
     }
+  });
+
+  it("only removes the legacy Supabase session key", () => {
+    const source = files.find((entry) => entry.file === "src/lib/backend/supabase.ts")?.text ?? "";
+    expect(source).toMatch(/localStorage\.removeItem\(SESSION_KEY\)/);
+    expect(source).not.toMatch(/(?:localStorage|sessionStorage)\.(?:getItem|setItem)\s*\(\s*SESSION_KEY/);
   });
 
   it("never writes cookies from JavaScript", () => {

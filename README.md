@@ -170,3 +170,11 @@ Environment variables are all optional — copy `.env.example` to `.env.local`:
 | `VITE_RELAY_SERVER` | Your own relay + PeerJS host. Unset = public PeerJS cloud, no relay traffic |
 | `VITE_PEER_HOST` / `_PORT` / `_PATH` | PeerJS signalling server (defaults to `0.peerjs.com:443`) |
 | `VITE_TURN_URL` / `_USERNAME` / `_CREDENTIAL` | TURN relay for restrictive mobile networks |
+
+### Security and runtime
+
+Use Node.js 22.12+ on the 22 line, Node 24, or Node 26+. Supabase
+sessions are memory-only and require login after reload. This is not a BFF or
+a complete security boundary. Read [production risks](docs/security/production-risks.md)
+before deploying shared or sensitive data, and rotate any previously exposed
+administrator password outside this repository.
