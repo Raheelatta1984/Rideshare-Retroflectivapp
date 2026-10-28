@@ -7,6 +7,13 @@ security headers and supply chain. One consolidated review for this repository.
 Repository: `Raheelatta1984/Rideshare-Retroflectivapp` · default branch `main` ·
 review branch `arena/210c8f85-rideshare-retroflectivapp`.
 
+> Follow-up: Vitest has been upgraded to 4.1.12 with a regenerated lockfile, and the
+> two tinypool exceptions removed. A clean install, all 370 tests, build, smoke and
+> audit pass; npm audit currently reports zero vulnerabilities. The BFF described
+> in §6 is still **not implemented**, so the default Supabase session remains in
+> browser storage. The historical observations and results below describe the
+> original review, not the current dependency versions.
+
 ## 1. Stack and applicability verdict
 
 | Detection | Result |
